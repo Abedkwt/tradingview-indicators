@@ -1,0 +1,580 @@
+//@version=5
+indicator("Abed Smart Candle Structure Entry PRO - Final Merge v1.2 Clean", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=150, max_bars_back=500)
+
+grpGeneral = "01. General Settings"
+showSignals = input.bool(true, "Show Signals", group=grpGeneral)
+showDashboard = input.bool(true, "Show Dashboard", group=grpGeneral)
+showEntrySignals = input.bool(true, "Show ENTRY Signals", group=grpGeneral)
+entryConfirmMode = input.string("Require Entry Candle Direction", "Entry Confirmation Mode", options=["Next Candle Only", "Require Entry Candle Direction", "Require Strong Entry Candle"], group=grpGeneral)
+planTriggerMode = input.string("Entry", "Trade Plan Trigger", options=["Confirmed", "Entry"], group=grpGeneral)
+productionSafeMode = input.bool(true, "Production Safe Mode", group=grpGeneral)
+reduceRepeatedSignals = input.bool(true, "Reduce Repeated Signals", group=grpGeneral)
+minBarsBetweenSameSignals = input.int(20, "Min Bars Between Same Signal", minval=1, maxval=100, group=grpGeneral)
+
+grpCandle = "02. Candle Reader Core"
+bodyStrongPct = input.float(45.0, "Strong Body %", minval=1, maxval=100, step=1, group=grpCandle)
+closeNearPct = input.float(70.0, "Close Near High / Low %", minval=1, maxval=100, step=1, group=grpCandle)
+wickPressurePct = input.float(35.0, "Wick Pressure %", minval=1, maxval=100, step=1, group=grpCandle)
+earlyThreshold = input.float(60.0, "Early Signal Threshold", minval=1, maxval=100, step=1, group=grpCandle)
+confirmedThreshold = input.float(75.0, "Confirmed Signal Threshold", minval=1, maxval=100, step=1, group=grpCandle)
+microBreakLen = input.int(5, "Micro High / Low Break Lookback", minval=2, maxval=50, group=grpCandle)
+supportResLookback = input.int(10, "Support / Resistance Lookback", minval=3, maxval=100, group=grpCandle)
+
+grpStructure = "03. Structure / Breakout / Retest"
+useStructureModule = input.bool(true, "Use Structure Module", group=grpStructure)
+structureLookback = input.int(20, "Structure High / Low Lookback", minval=5, maxval=200, group=grpStructure)
+useBreakoutForConfirm = input.bool(true, "Use Breakout For Confirmation", group=grpStructure)
+useRetestForConfirm = input.bool(true, "Use Retest For Confirmation", group=grpStructure)
+useMicroBreakForConfirm = input.bool(true, "Use Micro Break For Confirmation", group=grpStructure)
+useSupportReactionForConfirm = input.bool(true, "Use Support / Resistance Reaction For Confirmation", group=grpStructure)
+useMomentumForConfirm = input.bool(true, "Use Momentum For Confirmation", group=grpStructure)
+retestBarsWindow = input.int(5, "Retest Window After Breakout", minval=1, maxval=30, group=grpStructure)
+retestToleranceAtr = input.float(0.25, "Retest Tolerance ATR Multiplier", minval=0.01, maxval=3.0, step=0.01, group=grpStructure)
+fakeBreakWickPct = input.float(35.0, "Fake Break Wick %", minval=1, maxval=100, step=1, group=grpStructure)
+fakeBreakCloseBackInside = input.bool(true, "Fake Break Requires Close Back Inside Level", group=grpStructure)
+showSupportResistance = input.bool(false, "Show Support / Resistance", group=grpStructure)
+showStructureLevels = input.bool(false, "Show Structure High / Low", group=grpStructure)
+showRetestLevels = input.bool(false, "Show Last Breakout / Breakdown Levels", group=grpStructure)
+
+grpHTF = "04. HTF Confluence"
+useHTFModule = input.bool(true, "Use HTF Module", group=grpHTF)
+htfMode = input.string("Soft Filter", "HTF Mode", options=["Off", "Soft Filter", "Strict Filter"], group=grpHTF)
+htfTf1 = input.timeframe("5", "HTF 1", group=grpHTF)
+htfTf2 = input.timeframe("15", "HTF 2", group=grpHTF)
+htfTf3 = input.timeframe("60", "HTF 3", group=grpHTF)
+htfEmaFastLen = input.int(21, "HTF EMA Fast", minval=1, maxval=300, group=grpHTF)
+htfEmaSlowLen = input.int(50, "HTF EMA Slow", minval=1, maxval=300, group=grpHTF)
+htfRsiLen = input.int(14, "HTF RSI Length", minval=1, maxval=100, group=grpHTF)
+htfSoftScoreBoost = input.float(8.0, "HTF Soft Score Boost", minval=0, maxval=30, step=1, group=grpHTF)
+requireAtLeastTwoHTF = input.bool(true, "Require 2 of 3 HTF Alignment", group=grpHTF)
+
+grpTrade = "05. Trade Plan / SL / TP"
+useTradePlan = input.bool(true, "Use Trade Plan", group=grpTrade)
+showTradeLines = input.bool(true, "Show Entry / SL / TP Lines", group=grpTrade)
+showTradeLabels = input.bool(true, "Show Trade Labels", group=grpTrade)
+slMethod = input.string("ATR + Swing", "Stop Loss Method", options=["Confirmation Candle Wick", "Recent Swing", "Structure Level", "ATR", "ATR + Swing", "ATR + Candle Wick"], group=grpTrade)
+entrySource = input.string("Confirmed Close", "Entry Price Source", options=["Confirmed Close", "Next Candle Open"], group=grpTrade)
+atrSlLen = input.int(14, "ATR SL Length", minval=1, maxval=100, group=grpTrade)
+atrSlMult = input.float(1.5, "ATR SL Multiplier", minval=0.1, maxval=10.0, step=0.1, group=grpTrade)
+swingSlLookback = input.int(10, "Swing SL Lookback", minval=2, maxval=100, group=grpTrade)
+slBufferAtr = input.float(0.15, "Swing SL Buffer ATR", minval=0, maxval=3.0, step=0.01, group=grpTrade)
+candleWickBufferAtr = input.float(0.10, "Candle Wick SL Buffer ATR", minval=0, maxval=3.0, step=0.01, group=grpTrade)
+structureBufferAtr = input.float(0.20, "Structure SL Buffer ATR", minval=0, maxval=3.0, step=0.01, group=grpTrade)
+rr1 = input.float(1.0, "TP1 RR", minval=0.1, maxval=10.0, step=0.1, group=grpTrade)
+rr2 = input.float(2.0, "TP2 RR", minval=0.1, maxval=20.0, step=0.1, group=grpTrade)
+rr3 = input.float(3.0, "TP3 RR", minval=0.1, maxval=30.0, step=0.1, group=grpTrade)
+tradeLineExtendBars = input.int(40, "Trade Line Extend Bars", minval=5, maxval=300, group=grpTrade)
+entryLineColor = input.color(color.aqua, "Entry Line Color", group=grpTrade)
+slLineColor = input.color(color.red, "SL Line Color", group=grpTrade)
+tpLineColor = input.color(color.lime, "TP Line Color", group=grpTrade)
+tradeLineWidth = input.int(2, "Trade Line Width", minval=1, maxval=5, group=grpTrade)
+tradeLabelSizeInput = input.string("Small", "Trade Label Size", options=["Tiny", "Small", "Normal"], group=grpTrade)
+
+grpPerf = "06. Performance Stats"
+usePerformanceStats = input.bool(true, "Use Performance Stats", group=grpPerf)
+performanceMode = input.string("One Active Trade", "Performance Mode", options=["One Active Trade", "Reset On New Confirmed Signal"], group=grpPerf)
+winRule = input.string("TP1 = Win", "Win Rule", options=["TP1 = Win", "TP2 = Win", "TP3 = Win"], group=grpPerf)
+showPerformanceInDashboard = input.bool(true, "Show Performance In Dashboard", group=grpPerf)
+
+grpLabels = "07. Label Settings"
+labelMode = input.string("Compact", "Label Mode", options=["Off", "Tooltip Only", "Compact", "Full"], group=grpLabels)
+maxLabelsOnChart = input.int(70, "Max Labels On Chart", minval=10, maxval=500, group=grpLabels)
+labelTransparency = input.int(0, "Label Transparency", minval=0, maxval=100, group=grpLabels)
+labelSizeInput = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grpLabels)
+useCustomLabelText = input.bool(true, "Use Custom Label Text", group=grpLabels)
+customEarlyBuyText = input.string("BUY?", "Early Buy Label Text", group=grpLabels)
+customConfirmedBuyText = input.string("BUY CONFIRMED", "Confirmed Buy Label Text", group=grpLabels)
+customBuyEntryText = input.string("BUY ENTRY", "Buy Entry Label Text", group=grpLabels)
+customEarlySellText = input.string("SELL?", "Early Sell Label Text", group=grpLabels)
+customConfirmedSellText = input.string("SELL CONFIRMED", "Confirmed Sell Label Text", group=grpLabels)
+customSellEntryText = input.string("SELL ENTRY", "Sell Entry Label Text", group=grpLabels)
+buyColor = input.color(color.lime, "Buy Label Color", group=grpLabels)
+sellColor = input.color(color.red, "Sell Label Color", group=grpLabels)
+entryColor = input.color(color.aqua, "Entry Label Color", group=grpLabels)
+textColor = input.color(color.white, "Label Text Color", group=grpLabels)
+
+grpDash = "08. Dashboard Settings"
+dashPosition = input.string("Top Right", "Dashboard Position", options=["Top Right", "Middle Right", "Bottom Right"], group=grpDash)
+dashTextSizeInput = input.string("Small", "Dashboard Text Size", options=["Tiny", "Small", "Normal"], group=grpDash)
+dashTheme = input.string("Dark", "Dashboard Theme", options=["Dark", "Light"], group=grpDash)
+dashCompactMode = input.bool(false, "Compact Dashboard Mode", group=grpDash)
+showDashScores = input.bool(true, "Show Scores Section", group=grpDash)
+showDashHTF = input.bool(true, "Show HTF Section", group=grpDash)
+showDashStructure = input.bool(true, "Show Structure Section", group=grpDash)
+showDashTradePlan = input.bool(true, "Show Trade Plan Section", group=grpDash)
+
+grpAlerts = "09. Alerts"
+enableEarlyAlerts = input.bool(true, "Enable Early Signal Alerts", group=grpAlerts)
+enableConfirmedAlerts = input.bool(true, "Enable Confirmed Signal Alerts", group=grpAlerts)
+enableEntryAlerts = input.bool(true, "Enable Entry Alerts", group=grpAlerts)
+enableStructureAlerts = input.bool(true, "Enable Structure Alerts", group=grpAlerts)
+enableTradePlanAlerts = input.bool(true, "Enable Trade Plan Alerts", group=grpAlerts)
+enablePerformanceAlerts = input.bool(true, "Enable Performance Alerts", group=grpAlerts)
+
+effectiveMaxLabels = productionSafeMode ? math.min(maxLabelsOnChart, 70) : maxLabelsOnChart
+effectiveTradeExtendBars = productionSafeMode ? math.min(tradeLineExtendBars, 40) : tradeLineExtendBars
+
+f_labelSize(_size) => _size == "Tiny" ? size.tiny : _size == "Small" ? size.small : _size == "Normal" ? size.normal : size.large
+f_dashSize(_size) => _size == "Tiny" ? size.tiny : _size == "Small" ? size.small : size.normal
+f_tradeLabelSize(_size) => _size == "Tiny" ? size.tiny : _size == "Small" ? size.small : size.normal
+f_dashPosition(_pos) => _pos == "Top Right" ? position.top_right : _pos == "Middle Right" ? position.middle_right : position.bottom_right
+f_htfTrend(_tf) =>
+    htfClose = request.security(syminfo.tickerid, _tf, close, lookahead=barmerge.lookahead_off)
+    htfEmaFast = request.security(syminfo.tickerid, _tf, ta.ema(close, htfEmaFastLen), lookahead=barmerge.lookahead_off)
+    htfEmaSlow = request.security(syminfo.tickerid, _tf, ta.ema(close, htfEmaSlowLen), lookahead=barmerge.lookahead_off)
+    htfRsi = request.security(syminfo.tickerid, _tf, ta.rsi(close, htfRsiLen), lookahead=barmerge.lookahead_off)
+    bull = htfClose > htfEmaFast and htfEmaFast > htfEmaSlow and htfRsi >= 50
+    bear = htfClose < htfEmaFast and htfEmaFast < htfEmaSlow and htfRsi <= 50
+    bull ? 1 : bear ? -1 : 0
+f_trendText(_trend) => _trend == 1 ? "Bullish" : _trend == -1 ? "Bearish" : "Neutral"
+f_dashBg() => dashTheme == "Dark" ? color.black : color.white
+f_dashText() => dashTheme == "Dark" ? color.white : color.black
+f_dashHeaderBg() => dashTheme == "Dark" ? color.new(color.gray, 15) : color.new(color.gray, 75)
+f_statusColor(_status) => str.contains(_status, "BUY") or str.contains(_status, "Bull") or str.contains(_status, "TP") or str.contains(_status, "Win") ? color.new(color.lime, 0) : str.contains(_status, "SELL") or str.contains(_status, "Bear") or str.contains(_status, "SL") or str.contains(_status, "Loss") or str.contains(_status, "Blocked") ? color.new(color.red, 0) : color.new(color.gray, 0)
+f_priceText(_price) => na(_price) ? "NA" : str.tostring(_price, format.mintick)
+
+candleRange = high - low
+safeRange = candleRange == 0.0 ? syminfo.mintick : candleRange
+body = math.abs(close - open)
+bodyPct = body / safeRange * 100.0
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+upperWickPct = upperWick / safeRange * 100.0
+lowerWickPct = lowerWick / safeRange * 100.0
+closeLocationPct = (close - low) / safeRange * 100.0
+bullCandle = close > open
+bearCandle = close < open
+strongBullBody = bullCandle and bodyPct >= bodyStrongPct
+strongBearBody = bearCandle and bodyPct >= bodyStrongPct
+closeNearHighCond = closeLocationPct >= closeNearPct
+closeNearLowCond = closeLocationPct <= 100.0 - closeNearPct
+buyerPressure = lowerWickPct >= wickPressurePct or closeNearHighCond
+sellerPressure = upperWickPct >= wickPressurePct or closeNearLowCond
+atr = ta.atr(14)
+
+microHigh = ta.highest(high[1], microBreakLen)
+microLow = ta.lowest(low[1], microBreakLen)
+microHighBreak = close > microHigh
+microLowBreak = close < microLow
+simpleResistance = ta.highest(high[1], supportResLookback)
+simpleSupport = ta.lowest(low[1], supportResLookback)
+supportReaction = low <= simpleSupport and close > simpleSupport and closeNearHighCond
+resistanceReaction = high >= simpleResistance and close < simpleResistance and closeNearLowCond
+bullMomentum = bullCandle and close > close[1] and bodyPct >= bodyStrongPct
+bearMomentum = bearCandle and close < close[1] and bodyPct >= bodyStrongPct
+structureHigh = ta.highest(high[1], structureLookback)
+structureLow = ta.lowest(low[1], structureLookback)
+breakoutBuy = useStructureModule and close > structureHigh and bullCandle
+breakdownSell = useStructureModule and close < structureLow and bearCandle
+var float lastBreakoutLevel = na
+var float lastBreakdownLevel = na
+var int lastBreakoutBar = na
+var int lastBreakdownBar = na
+if breakoutBuy and barstate.isconfirmed
+    lastBreakoutLevel := structureHigh
+    lastBreakoutBar := bar_index
+if breakdownSell and barstate.isconfirmed
+    lastBreakdownLevel := structureLow
+    lastBreakdownBar := bar_index
+barsSinceBreakout = na(lastBreakoutBar) ? na : bar_index - lastBreakoutBar
+barsSinceBreakdown = na(lastBreakdownBar) ? na : bar_index - lastBreakdownBar
+withinBuyRetestWindow = not na(barsSinceBreakout) and barsSinceBreakout > 0 and barsSinceBreakout <= retestBarsWindow
+withinSellRetestWindow = not na(barsSinceBreakdown) and barsSinceBreakdown > 0 and barsSinceBreakdown <= retestBarsWindow
+retestTolerance = atr * retestToleranceAtr
+retestBuy = useStructureModule and withinBuyRetestWindow and not na(lastBreakoutLevel) and low <= lastBreakoutLevel + retestTolerance and close >= lastBreakoutLevel and closeNearHighCond and bullCandle
+retestSell = useStructureModule and withinSellRetestWindow and not na(lastBreakdownLevel) and high >= lastBreakdownLevel - retestTolerance and close <= lastBreakdownLevel and closeNearLowCond and bearCandle
+fakeBreakoutAgainstBuy = useStructureModule and high > structureHigh and (fakeBreakCloseBackInside ? close < structureHigh : true) and upperWickPct >= fakeBreakWickPct and bearCandle
+fakeBreakoutAgainstSell = useStructureModule and low < structureLow and (fakeBreakCloseBackInside ? close > structureLow : true) and lowerWickPct >= fakeBreakWickPct and bullCandle
+fakeStatus = fakeBreakoutAgainstBuy ? "Fake Breakout Up" : fakeBreakoutAgainstSell ? "Fake Breakdown Down" : "None"
+structureStatus = breakoutBuy ? "Breakout Up" : breakdownSell ? "Breakdown Down" : retestBuy ? "Retest Buy" : retestSell ? "Retest Sell" : "Neutral"
+
+htfEnabled = useHTFModule and htfMode != "Off"
+htfTrend1 = htfEnabled ? f_htfTrend(htfTf1) : 0
+htfTrend2 = htfEnabled ? f_htfTrend(htfTf2) : 0
+htfTrend3 = htfEnabled ? f_htfTrend(htfTf3) : 0
+htfBullCount = (htfTrend1 == 1 ? 1 : 0) + (htfTrend2 == 1 ? 1 : 0) + (htfTrend3 == 1 ? 1 : 0)
+htfBearCount = (htfTrend1 == -1 ? 1 : 0) + (htfTrend2 == -1 ? 1 : 0) + (htfTrend3 == -1 ? 1 : 0)
+htfBullAligned = requireAtLeastTwoHTF ? htfBullCount >= 2 : htfBullCount >= 1
+htfBearAligned = requireAtLeastTwoHTF ? htfBearCount >= 2 : htfBearCount >= 1
+htfBuySoftBoost = htfEnabled and htfMode == "Soft Filter" and htfBullAligned ? htfSoftScoreBoost : 0.0
+htfSellSoftBoost = htfEnabled and htfMode == "Soft Filter" and htfBearAligned ? htfSoftScoreBoost : 0.0
+htfBuyBlocked = htfEnabled and htfMode == "Strict Filter" and htfBearAligned and not htfBullAligned
+htfSellBlocked = htfEnabled and htfMode == "Strict Filter" and htfBullAligned and not htfBearAligned
+htfStatus = not htfEnabled ? "Off" : htfBuyBlocked ? "Buy Blocked" : htfSellBlocked ? "Sell Blocked" : htfBullCount > htfBearCount ? "Bullish" : htfBearCount > htfBullCount ? "Bearish" : "Neutral"
+
+bullScore = (bullCandle ? 15.0 : 0.0) + (strongBullBody ? 25.0 : 0.0) + (closeNearHighCond ? 20.0 : 0.0) + (buyerPressure ? 15.0 : 0.0) + (microHighBreak ? 10.0 : 0.0) + (supportReaction ? 10.0 : 0.0) + (breakoutBuy ? 15.0 : 0.0) + (retestBuy ? 15.0 : 0.0) + htfBuySoftBoost
+bearScore = (bearCandle ? 15.0 : 0.0) + (strongBearBody ? 25.0 : 0.0) + (closeNearLowCond ? 20.0 : 0.0) + (sellerPressure ? 15.0 : 0.0) + (microLowBreak ? 10.0 : 0.0) + (resistanceReaction ? 10.0 : 0.0) + (breakdownSell ? 15.0 : 0.0) + (retestSell ? 15.0 : 0.0) + htfSellSoftBoost
+bullScoreFinal = math.min(100.0, bullScore)
+bearScoreFinal = math.min(100.0, bearScore)
+
+coreBuyConfirmationCondition = (useBreakoutForConfirm and breakoutBuy) or (useRetestForConfirm and retestBuy) or (useMicroBreakForConfirm and microHighBreak) or (useSupportReactionForConfirm and supportReaction) or (useMomentumForConfirm and bullMomentum) or (strongBullBody and closeNearHighCond)
+coreSellConfirmationCondition = (useBreakoutForConfirm and breakdownSell) or (useRetestForConfirm and retestSell) or (useMicroBreakForConfirm and microLowBreak) or (useSupportReactionForConfirm and resistanceReaction) or (useMomentumForConfirm and bearMomentum) or (strongBearBody and closeNearLowCond)
+buyConfirmationCondition = coreBuyConfirmationCondition and not htfBuyBlocked
+sellConfirmationCondition = coreSellConfirmationCondition and not htfSellBlocked
+buyConfirmReason = htfBuyBlocked ? "HTF Buy Blocked" : breakoutBuy ? "Structure Breakout" : retestBuy ? "Breakout Retest" : microHighBreak ? "Micro High Break" : supportReaction ? "Support Reaction" : bullMomentum ? "Bull Momentum" : "Candle Confirmation"
+sellConfirmReason = htfSellBlocked ? "HTF Sell Blocked" : breakdownSell ? "Structure Breakdown" : retestSell ? "Breakdown Retest" : microLowBreak ? "Micro Low Break" : resistanceReaction ? "Resistance Reaction" : bearMomentum ? "Bear Momentum" : "Candle Confirmation"
+
+earlyBuy = barstate.isconfirmed and bullScoreFinal >= earlyThreshold and bullScoreFinal > bearScoreFinal and strongBullBody and closeNearHighCond and buyerPressure and not fakeBreakoutAgainstBuy and not htfBuyBlocked
+earlySell = barstate.isconfirmed and bearScoreFinal >= earlyThreshold and bearScoreFinal > bullScoreFinal and strongBearBody and closeNearLowCond and sellerPressure and not fakeBreakoutAgainstSell and not htfSellBlocked
+confirmedBuy = barstate.isconfirmed and bullScoreFinal >= confirmedThreshold and bullScoreFinal > bearScoreFinal and strongBullBody and closeNearHighCond and buyerPressure and buyConfirmationCondition and not fakeBreakoutAgainstBuy and not htfBuyBlocked
+confirmedSell = barstate.isconfirmed and bearScoreFinal >= confirmedThreshold and bearScoreFinal > bullScoreFinal and strongBearBody and closeNearLowCond and sellerPressure and sellConfirmationCondition and not fakeBreakoutAgainstSell and not htfSellBlocked
+buyEntryCandleOk = entryConfirmMode == "Next Candle Only" ? true : entryConfirmMode == "Require Entry Candle Direction" ? bullCandle and close >= close[1] and bullScoreFinal > bearScoreFinal : bullCandle and closeNearHighCond and bodyPct >= bodyStrongPct and bullScoreFinal > bearScoreFinal
+sellEntryCandleOk = entryConfirmMode == "Next Candle Only" ? true : entryConfirmMode == "Require Entry Candle Direction" ? bearCandle and close <= close[1] and bearScoreFinal > bullScoreFinal : bearCandle and closeNearLowCond and bodyPct >= bodyStrongPct and bearScoreFinal > bullScoreFinal
+buyEntry = showEntrySignals and confirmedBuy[1] and not confirmedBuy and not earlyBuy and buyEntryCandleOk and not fakeBreakoutAgainstBuy and not htfBuyBlocked
+sellEntry = showEntrySignals and confirmedSell[1] and not confirmedSell and not earlySell and sellEntryCandleOk and not fakeBreakoutAgainstSell and not htfSellBlocked
+
+var int lastEarlyBuyBar = na
+var int lastEarlySellBar = na
+var int lastConfirmedBuyBar = na
+var int lastConfirmedSellBar = na
+var int lastBuyEntryBar = na
+var int lastSellEntryBar = na
+canShowEarlyBuy = not reduceRepeatedSignals or na(lastEarlyBuyBar) or bar_index - lastEarlyBuyBar >= minBarsBetweenSameSignals
+canShowEarlySell = not reduceRepeatedSignals or na(lastEarlySellBar) or bar_index - lastEarlySellBar >= minBarsBetweenSameSignals
+canShowConfirmedBuy = not reduceRepeatedSignals or na(lastConfirmedBuyBar) or bar_index - lastConfirmedBuyBar >= minBarsBetweenSameSignals
+canShowConfirmedSell = not reduceRepeatedSignals or na(lastConfirmedSellBar) or bar_index - lastConfirmedSellBar >= minBarsBetweenSameSignals
+canShowBuyEntry = not reduceRepeatedSignals or na(lastBuyEntryBar) or bar_index - lastBuyEntryBar >= minBarsBetweenSameSignals
+canShowSellEntry = not reduceRepeatedSignals or na(lastSellEntryBar) or bar_index - lastSellEntryBar >= minBarsBetweenSameSignals
+earlyBuyClean = earlyBuy and canShowEarlyBuy
+earlySellClean = earlySell and canShowEarlySell
+confirmedBuyClean = confirmedBuy and canShowConfirmedBuy
+confirmedSellClean = confirmedSell and canShowConfirmedSell
+buyEntryClean = buyEntry and canShowBuyEntry
+sellEntryClean = sellEntry and canShowSellEntry
+if earlyBuyClean
+    lastEarlyBuyBar := bar_index
+if earlySellClean
+    lastEarlySellBar := bar_index
+if confirmedBuyClean
+    lastConfirmedBuyBar := bar_index
+if confirmedSellClean
+    lastConfirmedSellBar := bar_index
+if buyEntryClean
+    lastBuyEntryBar := bar_index
+if sellEntryClean
+    lastSellEntryBar := bar_index
+
+tradeAtr = ta.atr(atrSlLen)
+tradeBuffer = tradeAtr * slBufferAtr
+candleWickBuffer = tradeAtr * candleWickBufferAtr
+structureBuffer = tradeAtr * structureBufferAtr
+swingLowForSL = ta.lowest(low[1], swingSlLookback)
+swingHighForSL = ta.highest(high[1], swingSlLookback)
+buyAtrSL = close - tradeAtr * atrSlMult
+sellAtrSL = close + tradeAtr * atrSlMult
+buySwingSL = swingLowForSL - tradeBuffer
+sellSwingSL = swingHighForSL + tradeBuffer
+buyCandleWickSL = low - candleWickBuffer
+sellCandleWickSL = high + candleWickBuffer
+buyStructureSL = not na(lastBreakoutLevel) ? lastBreakoutLevel - structureBuffer : buySwingSL
+sellStructureSL = not na(lastBreakdownLevel) ? lastBreakdownLevel + structureBuffer : sellSwingSL
+buyFinalSL = slMethod == "Confirmation Candle Wick" ? buyCandleWickSL : slMethod == "Recent Swing" ? buySwingSL : slMethod == "Structure Level" ? buyStructureSL : slMethod == "ATR" ? buyAtrSL : slMethod == "ATR + Candle Wick" ? math.min(buyAtrSL, buyCandleWickSL) : math.min(buyAtrSL, buySwingSL)
+sellFinalSL = slMethod == "Confirmation Candle Wick" ? sellCandleWickSL : slMethod == "Recent Swing" ? sellSwingSL : slMethod == "Structure Level" ? sellStructureSL : slMethod == "ATR" ? sellAtrSL : slMethod == "ATR + Candle Wick" ? math.max(sellAtrSL, sellCandleWickSL) : math.max(sellAtrSL, sellSwingSL)
+buyPlanEntry = entrySource == "Confirmed Close" ? close : open
+sellPlanEntry = entrySource == "Confirmed Close" ? close : open
+buyRisk = buyPlanEntry - buyFinalSL
+sellRisk = sellFinalSL - sellPlanEntry
+validBuyRisk = buyRisk > syminfo.mintick
+validSellRisk = sellRisk > syminfo.mintick
+buyTP1 = buyPlanEntry + buyRisk * rr1
+buyTP2 = buyPlanEntry + buyRisk * rr2
+buyTP3 = buyPlanEntry + buyRisk * rr3
+sellTP1 = sellPlanEntry - sellRisk * rr1
+sellTP2 = sellPlanEntry - sellRisk * rr2
+sellTP3 = sellPlanEntry - sellRisk * rr3
+var string activeTradeDirection = "NONE"
+var int activeTradeBar = na
+var float activeEntry = na
+var float activeSL = na
+var float activeTP1 = na
+var float activeTP2 = na
+var float activeTP3 = na
+var bool activeTP1Hit = false
+var bool activeTP2Hit = false
+var bool activeTP3Hit = false
+var bool activeSLHit = false
+newBuyPlan = useTradePlan and (planTriggerMode == "Entry" ? buyEntryClean : confirmedBuyClean) and validBuyRisk
+newSellPlan = useTradePlan and (planTriggerMode == "Entry" ? sellEntryClean : confirmedSellClean) and validSellRisk
+if newBuyPlan
+    activeTradeDirection := "BUY"
+    activeTradeBar := bar_index
+    activeEntry := buyPlanEntry
+    activeSL := buyFinalSL
+    activeTP1 := buyTP1
+    activeTP2 := buyTP2
+    activeTP3 := buyTP3
+    activeTP1Hit := false
+    activeTP2Hit := false
+    activeTP3Hit := false
+    activeSLHit := false
+if newSellPlan
+    activeTradeDirection := "SELL"
+    activeTradeBar := bar_index
+    activeEntry := sellPlanEntry
+    activeSL := sellFinalSL
+    activeTP1 := sellTP1
+    activeTP2 := sellTP2
+    activeTP3 := sellTP3
+    activeTP1Hit := false
+    activeTP2Hit := false
+    activeTP3Hit := false
+    activeSLHit := false
+if activeTradeDirection == "BUY"
+    activeTP1Hit := activeTP1Hit or high >= activeTP1
+    activeTP2Hit := activeTP2Hit or high >= activeTP2
+    activeTP3Hit := activeTP3Hit or high >= activeTP3
+    activeSLHit := activeSLHit or low <= activeSL
+if activeTradeDirection == "SELL"
+    activeTP1Hit := activeTP1Hit or low <= activeTP1
+    activeTP2Hit := activeTP2Hit or low <= activeTP2
+    activeTP3Hit := activeTP3Hit or low <= activeTP3
+    activeSLHit := activeSLHit or high >= activeSL
+tradeStatus = not useTradePlan ? "Off" : activeTradeDirection == "NONE" ? "No Active Plan" : activeSLHit ? "SL HIT" : activeTP3Hit ? "TP3 HIT" : activeTP2Hit ? "TP2 HIT" : activeTP1Hit ? "TP1 HIT" : activeTradeDirection + " ACTIVE"
+tradeRiskStatus = not useTradePlan ? "Off" : activeTradeDirection == "NONE" ? "NA" : activeSLHit ? "Loss / Stopped" : activeTP3Hit ? "Full Target Hit" : activeTP2Hit ? "Strong Profit" : activeTP1Hit ? "Secure / Manage" : "Running"
+tradeNextAction = not useTradePlan ? "Off" : activeTradeDirection == "NONE" ? "Wait Confirmed Signal" : activeSLHit ? "Plan Finished" : activeTP3Hit ? "Plan Finished" : activeTP2Hit ? "Manage Remaining" : activeTP1Hit ? "Move SL / Secure" : "Hold / Wait TP1"
+
+var int totalTrades = 0
+var int totalWins = 0
+var int totalLosses = 0
+var int totalTP1Hits = 0
+var int totalTP2Hits = 0
+var int totalTP3Hits = 0
+var int totalSLHits = 0
+var bool perfTradeOpen = false
+var string perfDirection = "NONE"
+var float perfSL = na
+var float perfTP1 = na
+var float perfTP2 = na
+var float perfTP3 = na
+var bool perfResolved = false
+newPerformanceTrade = usePerformanceStats and (newBuyPlan or newSellPlan) and (performanceMode == "Reset On New Confirmed Signal" or not perfTradeOpen)
+if newPerformanceTrade
+    totalTrades += 1
+    perfTradeOpen := true
+    perfResolved := false
+    perfDirection := activeTradeDirection
+    perfSL := activeSL
+    perfTP1 := activeTP1
+    perfTP2 := activeTP2
+    perfTP3 := activeTP3
+perfBuy = perfDirection == "BUY"
+perfSell = perfDirection == "SELL"
+perfTP1Hit = perfTradeOpen and not perfResolved and ((perfBuy and high >= perfTP1) or (perfSell and low <= perfTP1))
+perfTP2Hit = perfTradeOpen and not perfResolved and ((perfBuy and high >= perfTP2) or (perfSell and low <= perfTP2))
+perfTP3Hit = perfTradeOpen and not perfResolved and ((perfBuy and high >= perfTP3) or (perfSell and low <= perfTP3))
+perfSLHit = perfTradeOpen and not perfResolved and ((perfBuy and low <= perfSL) or (perfSell and high >= perfSL))
+perfWinHit = winRule == "TP1 = Win" ? perfTP1Hit : winRule == "TP2 = Win" ? perfTP2Hit : perfTP3Hit
+if usePerformanceStats and perfTradeOpen and not perfResolved
+    if perfWinHit
+        totalWins += 1
+        totalTP1Hits += perfTP1Hit ? 1 : 0
+        totalTP2Hits += perfTP2Hit ? 1 : 0
+        totalTP3Hits += perfTP3Hit ? 1 : 0
+        perfResolved := true
+        perfTradeOpen := false
+    else if perfSLHit
+        totalLosses += 1
+        totalSLHits += 1
+        perfResolved := true
+        perfTradeOpen := false
+winRate = totalTrades > 0 ? totalWins / totalTrades * 100.0 : na
+lossRate = totalTrades > 0 ? totalLosses / totalTrades * 100.0 : na
+tp1Rate = totalTrades > 0 ? totalTP1Hits / totalTrades * 100.0 : na
+slRate = totalTrades > 0 ? totalSLHits / totalTrades * 100.0 : na
+
+earlyBuyTextBase = useCustomLabelText ? customEarlyBuyText : "BUY?"
+confirmedBuyTextBase = useCustomLabelText ? customConfirmedBuyText : "BUY CONFIRMED"
+buyEntryTextBase = useCustomLabelText ? customBuyEntryText : "BUY ENTRY"
+earlySellTextBase = useCustomLabelText ? customEarlySellText : "SELL?"
+confirmedSellTextBase = useCustomLabelText ? customConfirmedSellText : "SELL CONFIRMED"
+sellEntryTextBase = useCustomLabelText ? customSellEntryText : "SELL ENTRY"
+earlyBuyText = labelMode == "Full" ? "EARLY BUY\n" + earlyBuyTextBase : earlyBuyTextBase
+confirmedBuyText = labelMode == "Full" ? confirmedBuyTextBase + "\n" + buyConfirmReason : labelMode == "Compact" ? confirmedBuyTextBase : "CONF"
+buyEntryText = labelMode == "Full" ? buyEntryTextBase + "\nAfter Confirmation" : buyEntryTextBase
+earlySellText = labelMode == "Full" ? "EARLY SELL\n" + earlySellTextBase : earlySellTextBase
+confirmedSellText = labelMode == "Full" ? confirmedSellTextBase + "\n" + sellConfirmReason : labelMode == "Compact" ? confirmedSellTextBase : "CONF"
+sellEntryText = labelMode == "Full" ? sellEntryTextBase + "\nAfter Confirmation" : sellEntryTextBase
+buyTooltip = "Signal: BUY\nBull Score: " + str.tostring(bullScoreFinal, "#.##") + "%\nBear Score: " + str.tostring(bearScoreFinal, "#.##") + "%\nReason: " + buyConfirmReason + "\nTrade: " + tradeStatus + "\nEntry: " + f_priceText(activeEntry) + "\nSL: " + f_priceText(activeSL) + "\nTP1: " + f_priceText(activeTP1)
+sellTooltip = "Signal: SELL\nBear Score: " + str.tostring(bearScoreFinal, "#.##") + "%\nBull Score: " + str.tostring(bullScoreFinal, "#.##") + "%\nReason: " + sellConfirmReason + "\nTrade: " + tradeStatus + "\nEntry: " + f_priceText(activeEntry) + "\nSL: " + f_priceText(activeSL) + "\nTP1: " + f_priceText(activeTP1)
+
+var label[] signalLabels = array.new<label>()
+f_addLabel(_x, _y, _text, _style, _color, _tooltip) =>
+    if showSignals and labelMode != "Off"
+        newLabel = label.new(_x, _y, _text, style=_style, color=color.new(_color, labelTransparency), textcolor=textColor, size=f_labelSize(labelSizeInput), tooltip=_tooltip)
+        array.push(signalLabels, newLabel)
+        if array.size(signalLabels) > effectiveMaxLabels
+            oldLabel = array.shift(signalLabels)
+            label.delete(oldLabel)
+
+buyLabelY = low - atr * 0.15
+sellLabelY = high + atr * 0.15
+if confirmedBuyClean
+    f_addLabel(bar_index, buyLabelY, confirmedBuyText, label.style_label_up, buyColor, buyTooltip)
+else if earlyBuyClean
+    f_addLabel(bar_index, buyLabelY, earlyBuyText, label.style_label_up, buyColor, buyTooltip)
+if buyEntryClean
+    f_addLabel(bar_index, buyLabelY, buyEntryText, label.style_label_up, entryColor, "BUY ENTRY after BUY CONFIRMED")
+if confirmedSellClean
+    f_addLabel(bar_index, sellLabelY, confirmedSellText, label.style_label_down, sellColor, sellTooltip)
+else if earlySellClean
+    f_addLabel(bar_index, sellLabelY, earlySellText, label.style_label_down, sellColor, sellTooltip)
+if sellEntryClean
+    f_addLabel(bar_index, sellLabelY, sellEntryText, label.style_label_down, entryColor, "SELL ENTRY after SELL CONFIRMED")
+
+var line[] tradeLines = array.new<line>()
+var label[] tradeLabels = array.new<label>()
+f_clearTradeObjects() =>
+    while array.size(tradeLines) > 0
+        tl = array.pop(tradeLines)
+        line.delete(tl)
+    while array.size(tradeLabels) > 0
+        tb = array.pop(tradeLabels)
+        label.delete(tb)
+f_addTradeLine(_price, _txt, _color) =>
+    if useTradePlan and showTradeLines and not na(_price)
+        x1 = activeTradeBar
+        x2 = bar_index + effectiveTradeExtendBars
+        tl = line.new(x1, _price, x2, _price, extend=extend.none, color=_color, width=tradeLineWidth, style=line.style_solid)
+        array.push(tradeLines, tl)
+        if showTradeLabels
+            tb = label.new(x2, _price, _txt + " | " + str.tostring(_price, format.mintick), style=label.style_label_left, color=color.new(_color, 10), textcolor=color.white, size=f_tradeLabelSize(tradeLabelSizeInput))
+            array.push(tradeLabels, tb)
+if newBuyPlan or newSellPlan
+    f_clearTradeObjects()
+    f_addTradeLine(activeEntry, "ENTRY", entryLineColor)
+    f_addTradeLine(activeSL, "SL", slLineColor)
+    f_addTradeLine(activeTP1, "TP1", tpLineColor)
+    f_addTradeLine(activeTP2, "TP2", tpLineColor)
+    f_addTradeLine(activeTP3, "TP3", tpLineColor)
+
+plot(showSupportResistance ? simpleSupport : na, "Support", color=color.new(color.lime, 85), linewidth=1)
+plot(showSupportResistance ? simpleResistance : na, "Resistance", color=color.new(color.red, 85), linewidth=1)
+plot(showStructureLevels and useStructureModule ? structureHigh : na, "Structure High", color=color.new(color.red, 70), linewidth=1)
+plot(showStructureLevels and useStructureModule ? structureLow : na, "Structure Low", color=color.new(color.lime, 70), linewidth=1)
+plot(showRetestLevels and useStructureModule ? lastBreakoutLevel : na, "Last Breakout Level", color=color.new(color.aqua, 60), linewidth=1)
+plot(showRetestLevels and useStructureModule ? lastBreakdownLevel : na, "Last Breakdown Level", color=color.new(color.orange, 60), linewidth=1)
+
+var table dash = table.new(f_dashPosition(dashPosition), 2, 45, border_width=1)
+dashBg = f_dashBg()
+dashText = f_dashText()
+dashHeaderBg = f_dashHeaderBg()
+f_dashCell(_row, _left, _right, _rightBg) =>
+    table.cell(dash, 0, _row, _left, text_color=dashText, bgcolor=dashBg, text_size=f_dashSize(dashTextSizeInput))
+    table.cell(dash, 1, _row, _right, text_color=dashText, bgcolor=_rightBg, text_size=f_dashSize(dashTextSizeInput))
+f_dashHeader(_row, _title) =>
+    table.cell(dash, 0, _row, _title, text_color=dashText, bgcolor=dashHeaderBg, text_size=f_dashSize(dashTextSizeInput))
+    table.cell(dash, 1, _row, "", text_color=dashText, bgcolor=dashHeaderBg, text_size=f_dashSize(dashTextSizeInput))
+signalStatus = buyEntryClean ? "BUY ENTRY" : sellEntryClean ? "SELL ENTRY" : confirmedBuyClean ? "BUY CONFIRMED" : confirmedSellClean ? "SELL CONFIRMED" : earlyBuyClean ? "BUY?" : earlySellClean ? "SELL?" : "WAIT"
+signalTiming = buyEntryClean ? "Entry after confirmed buy + entry candle valid" : sellEntryClean ? "Entry after confirmed sell + entry candle valid" : confirmedBuyClean ? "Confirmed on current closed candle" : confirmedSellClean ? "Confirmed on current closed candle" : earlyBuyClean ? "Early setup on current closed candle" : earlySellClean ? "Early setup on current closed candle" : "No active signal"
+mainBias = bullScoreFinal > bearScoreFinal ? "Bullish" : bearScoreFinal > bullScoreFinal ? "Bearish" : "Neutral"
+confirmReason = confirmedBuyClean ? buyConfirmReason : confirmedSellClean ? sellConfirmReason : earlyBuyClean ? "Early Bullish Setup" : earlySellClean ? "Early Bearish Setup" : buyEntryClean ? "After BUY CONFIRMED" : sellEntryClean ? "After SELL CONFIRMED" : "None"
+nextAction = confirmedBuyClean ? "WAIT VALID BUY ENTRY" : confirmedSellClean ? "WAIT VALID SELL ENTRY" : buyEntryClean ? "BUY ENTRY ACTIVE" : sellEntryClean ? "SELL ENTRY ACTIVE" : earlyBuyClean ? "WAIT BUY CONFIRMATION" : earlySellClean ? "WAIT SELL CONFIRMATION" : tradeNextAction
+if showDashboard and barstate.islast
+    for i = 0 to 44
+        table.cell(dash, 0, i, "", bgcolor=dashBg)
+        table.cell(dash, 1, i, "", bgcolor=dashBg)
+    row = 0
+    f_dashHeader(row, "ABED SMART ENTRY PRO")
+    row += 1
+    f_dashCell(row, "Version", "Final Merge v1.2 Clean", dashBg)
+    row += 1
+    f_dashCell(row, "Signal Status", signalStatus, f_statusColor(signalStatus))
+    row += 1
+    f_dashCell(row, "Signal Timing", signalTiming, dashBg)
+    row += 1
+    f_dashCell(row, "Main Bias", mainBias, f_statusColor(mainBias))
+    row += 1
+    f_dashCell(row, "Reason", confirmReason, dashBg)
+    row += 1
+    f_dashCell(row, "Next Action", nextAction, f_statusColor(nextAction))
+    row += 1
+    if showDashScores and not dashCompactMode
+        f_dashHeader(row, "SCORES")
+        row += 1
+        f_dashCell(row, "Bull Score", str.tostring(bullScoreFinal, "#.##") + "%", dashBg)
+        row += 1
+        f_dashCell(row, "Bear Score", str.tostring(bearScoreFinal, "#.##") + "%", dashBg)
+        row += 1
+        f_dashCell(row, "Body %", str.tostring(bodyPct, "#.##") + "%", dashBg)
+        row += 1
+        f_dashCell(row, "Close Location", str.tostring(closeLocationPct, "#.##") + "%", dashBg)
+        row += 1
+    if showDashHTF and not dashCompactMode
+        f_dashHeader(row, "HTF")
+        row += 1
+        f_dashCell(row, "HTF " + htfTf1, f_trendText(htfTrend1), f_statusColor(f_trendText(htfTrend1)))
+        row += 1
+        f_dashCell(row, "HTF " + htfTf2, f_trendText(htfTrend2), f_statusColor(f_trendText(htfTrend2)))
+        row += 1
+        f_dashCell(row, "HTF " + htfTf3, f_trendText(htfTrend3), f_statusColor(f_trendText(htfTrend3)))
+        row += 1
+        f_dashCell(row, "HTF Status", htfStatus, f_statusColor(htfStatus))
+        row += 1
+    if showDashStructure and not dashCompactMode
+        f_dashHeader(row, "STRUCTURE")
+        row += 1
+        f_dashCell(row, "Structure", structureStatus, f_statusColor(structureStatus))
+        row += 1
+        f_dashCell(row, "Fake Break", fakeStatus, f_statusColor(fakeStatus))
+        row += 1
+        f_dashCell(row, "Breakout Level", f_priceText(lastBreakoutLevel), dashBg)
+        row += 1
+        f_dashCell(row, "Breakdown Level", f_priceText(lastBreakdownLevel), dashBg)
+        row += 1
+    if showDashTradePlan
+        f_dashHeader(row, "TRADE PLAN")
+        row += 1
+        f_dashCell(row, "Plan Trigger", planTriggerMode, dashBg)
+        row += 1
+        f_dashCell(row, "Trade Status", tradeStatus, f_statusColor(tradeStatus))
+        row += 1
+        f_dashCell(row, "Direction", activeTradeDirection, f_statusColor(activeTradeDirection))
+        row += 1
+        f_dashCell(row, "Entry", f_priceText(activeEntry), dashBg)
+        row += 1
+        f_dashCell(row, "SL", f_priceText(activeSL), f_statusColor(tradeRiskStatus))
+        row += 1
+        f_dashCell(row, "TP1", f_priceText(activeTP1), dashBg)
+        row += 1
+        f_dashCell(row, "TP2", f_priceText(activeTP2), dashBg)
+        row += 1
+        f_dashCell(row, "TP3", f_priceText(activeTP3), dashBg)
+        row += 1
+        f_dashCell(row, "Risk Status", tradeRiskStatus, f_statusColor(tradeRiskStatus))
+        row += 1
+    if showPerformanceInDashboard and usePerformanceStats
+        f_dashHeader(row, "PERFORMANCE")
+        row += 1
+        f_dashCell(row, "Total Trades", str.tostring(totalTrades), dashBg)
+        row += 1
+        f_dashCell(row, "Wins", str.tostring(totalWins), f_statusColor("Win"))
+        row += 1
+        f_dashCell(row, "Losses", str.tostring(totalLosses), f_statusColor("Loss"))
+        row += 1
+        f_dashCell(row, "Win Rate", totalTrades > 0 ? str.tostring(winRate, "#.##") + "%" : "NA", dashBg)
+        row += 1
+        f_dashCell(row, "Loss Rate", totalTrades > 0 ? str.tostring(lossRate, "#.##") + "%" : "NA", dashBg)
+        row += 1
+        f_dashCell(row, "TP1 Rate", totalTrades > 0 ? str.tostring(tp1Rate, "#.##") + "%" : "NA", dashBg)
+        row += 1
+        f_dashCell(row, "SL Rate", totalTrades > 0 ? str.tostring(slRate, "#.##") + "%" : "NA", dashBg)
+        row += 1
+
+alertcondition(enableEarlyAlerts and earlyBuyClean, "BUY? / EARLY BUY", "BUY? early bullish setup confirmed on closed candle")
+alertcondition(enableEarlyAlerts and earlySellClean, "SELL? / EARLY SELL", "SELL? early bearish setup confirmed on closed candle")
+alertcondition(enableConfirmedAlerts and confirmedBuyClean, "BUY CONFIRMED", "BUY CONFIRMED on current closed candle")
+alertcondition(enableConfirmedAlerts and confirmedSellClean, "SELL CONFIRMED", "SELL CONFIRMED on current closed candle")
+alertcondition(enableEntryAlerts and buyEntryClean, "BUY ENTRY", "BUY ENTRY after confirmed buy and valid entry candle")
+alertcondition(enableEntryAlerts and sellEntryClean, "SELL ENTRY", "SELL ENTRY after confirmed sell and valid entry candle")
+alertcondition(enableStructureAlerts and breakoutBuy, "STRUCTURE BREAKOUT", "Price closed above structure high")
+alertcondition(enableStructureAlerts and breakdownSell, "STRUCTURE BREAKDOWN", "Price closed below structure low")
+alertcondition(enableStructureAlerts and retestBuy, "BUY RETEST VALID", "Valid buy retest after breakout")
+alertcondition(enableStructureAlerts and retestSell, "SELL RETEST VALID", "Valid sell retest after breakdown")
+alertcondition(enableTradePlanAlerts and newBuyPlan, "NEW BUY TRADE PLAN", "New BUY trade plan created")
+alertcondition(enableTradePlanAlerts and newSellPlan, "NEW SELL TRADE PLAN", "New SELL trade plan created")
+alertcondition(enableTradePlanAlerts and activeTP1Hit and not activeTP1Hit[1], "TP1 HIT", "TP1 hit on active trade plan")
+alertcondition(enableTradePlanAlerts and activeTP2Hit and not activeTP2Hit[1], "TP2 HIT", "TP2 hit on active trade plan")
+alertcondition(enableTradePlanAlerts and activeTP3Hit and not activeTP3Hit[1], "TP3 HIT", "TP3 hit on active trade plan")
+alertcondition(enableTradePlanAlerts and activeSLHit and not activeSLHit[1], "SL HIT", "SL hit on active trade plan")
+alertcondition(enablePerformanceAlerts and perfWinHit, "PERFORMANCE WIN", "Performance trade counted as WIN")
+alertcondition(enablePerformanceAlerts and perfSLHit, "PERFORMANCE LOSS", "Performance trade counted as LOSS")
