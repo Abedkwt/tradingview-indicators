@@ -1,0 +1,1 @@
+v1.2 will add BE after TP1, last trade result, last direction, last points, and cleaner plan options.
