@@ -1,0 +1,380 @@
+//@version=5
+indicator("Abed Zero Tolerance Gold PRO v1 - Clean Core", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=150, max_bars_back=500)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INPUTS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+groupCore = "01 Core Controls"
+showWaitLabels      = input.bool(true,  "Show WAIT Labels", group=groupCore)
+showConfirmedLabels = input.bool(true,  "Show CONFIRMED Labels", group=groupCore)
+showTradePlan       = input.bool(true,  "Show Entry / SL / TP Lines", group=groupCore)
+showDashboard       = input.bool(true,  "Show Dashboard", group=groupCore)
+maxKeepLabels       = input.int(80, "Max Labels To Keep", minval=20, maxval=500, group=groupCore)
+maxKeepLines        = input.int(40, "Max Lines To Keep", minval=10, maxval=300, group=groupCore)
+
+modeGroup = "02 Mode"
+mode = input.string("Balanced", "Signal Mode", options=["Aggressive", "Balanced", "Strict"], group=modeGroup)
+newsMode = input.string("Normal", "Manual News Risk", options=["Normal", "High News Risk", "No Trade"], group=modeGroup)
+
+trendGroup = "03 Trend Filters"
+useTrendFilter = input.bool(true, "Use Current Trend Filter", group=trendGroup)
+useHTFTrend    = input.bool(true, "Use HTF Trend Filter", group=trendGroup)
+strictHTF      = input.bool(false, "Strict HTF Alignment", group=trendGroup)
+emaFastLen     = input.int(50, "EMA Fast", minval=1, group=trendGroup)
+emaSlowLen     = input.int(200, "EMA Slow", minval=1, group=trendGroup)
+htf1           = input.timeframe("15", "HTF 1", group=trendGroup)
+htf2           = input.timeframe("60", "HTF 2", group=trendGroup)
+htf3           = input.timeframe("240", "HTF 3", group=trendGroup)
+
+candleGroup = "04 Candle Structure"
+bodyMinInput      = input.float(45.0, "Min Body %", minval=1, maxval=100, step=1, group=candleGroup)
+closeBuyMinInput  = input.float(60.0, "BUY Close Location Min %", minval=1, maxval=100, step=1, group=candleGroup)
+closeSellMaxInput = input.float(40.0, "SELL Close Location Max %", minval=0, maxval=99, step=1, group=candleGroup)
+wickRejectInput   = input.float(25.0, "Min Rejection Wick %", minval=1, maxval=100, step=1, group=candleGroup)
+
+zoneGroup = "05 Zones / Structure"
+useZones       = input.bool(true, "Use Support / Resistance Zones", group=zoneGroup)
+usePivots      = input.bool(true, "Use Pivot S/R", group=zoneGroup)
+pivotLen       = input.int(10, "Pivot Length", minval=2, maxval=100, group=zoneGroup)
+usePD          = input.bool(true, "Use Previous Day High/Low", group=zoneGroup)
+usePW          = input.bool(true, "Use Previous Week High/Low", group=zoneGroup)
+useSweep       = input.bool(true, "Use Liquidity Sweep", group=zoneGroup)
+useBOS         = input.bool(true, "Use Break Of Structure", group=zoneGroup)
+structureLen   = input.int(20, "Structure Lookback", minval=5, maxval=200, group=zoneGroup)
+zoneAtrMult    = input.float(0.35, "Zone Proximity ATR", minval=0.05, maxval=5, step=0.05, group=zoneGroup)
+
+riskGroup = "06 Risk / Targets"
+atrLen       = input.int(14, "ATR Length", minval=1, group=riskGroup)
+slAtrMult    = input.float(1.2, "SL ATR Multiplier", minval=0.1, maxval=10, step=0.1, group=riskGroup)
+tpMode       = input.string("Hybrid", "TP Mode", options=["ATR", "Fixed Points", "Hybrid"], group=riskGroup)
+fixedTP1     = input.float(6.0, "Fixed TP1 Points", minval=0.1, step=0.1, group=riskGroup)
+fixedTP2     = input.float(12.0, "Fixed TP2 Points", minval=0.1, step=0.1, group=riskGroup)
+fixedTP3     = input.float(20.0, "Fixed TP3 Points", minval=0.1, step=0.1, group=riskGroup)
+tp1Atr       = input.float(0.8, "TP1 ATR", minval=0.1, step=0.1, group=riskGroup)
+tp2Atr       = input.float(1.5, "TP2 ATR", minval=0.1, step=0.1, group=riskGroup)
+tp3Atr       = input.float(2.2, "TP3 ATR", minval=0.1, step=0.1, group=riskGroup)
+allowBigTP   = input.bool(true, "Allow 20 Point Target On Strong Trend", group=riskGroup)
+
+macroGroup = "07 Macro Filter"
+useMacroFilter = input.bool(false, "Use DXY / US10Y Filter", group=macroGroup)
+dxySymbol      = input.symbol("TVC:DXY", "DXY Symbol", group=macroGroup)
+us10ySymbol    = input.symbol("TVC:US10Y", "US10Y Symbol", group=macroGroup)
+macroTf        = input.timeframe("15", "Macro TF", group=macroGroup)
+
+visualGroup = "08 Visuals"
+waitBuyText      = input.string("WAIT BUY", "WAIT BUY Text", group=visualGroup)
+waitSellText     = input.string("WAIT SELL", "WAIT SELL Text", group=visualGroup)
+buyConfText      = input.string("BUY CONFIRMED", "BUY Confirmed Text", group=visualGroup)
+sellConfText     = input.string("SELL CONFIRMED", "SELL Confirmed Text", group=visualGroup)
+dashPosition     = input.string("Top Right", "Dashboard Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=visualGroup)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CORE CALCULATIONS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+atr = ta.atr(atrLen)
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+plot(emaFast, "EMA Fast", color=color.orange, linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.blue, linewidth=2)
+
+rng = math.max(high - low, syminfo.mintick)
+body = math.abs(close - open)
+bodyPct = body / rng * 100.0
+closeLoc = (close - low) / rng * 100.0
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+upperWickPct = upperWick / rng * 100.0
+lowerWickPct = lowerWick / rng * 100.0
+bull = close > open
+bear = close < open
+
+bodyMin = newsMode == "High News Risk" ? math.max(bodyMinInput, 55) : bodyMinInput
+closeBuyMin = newsMode == "High News Risk" ? math.max(closeBuyMinInput, 68) : closeBuyMinInput
+closeSellMax = newsMode == "High News Risk" ? math.min(closeSellMaxInput, 32) : closeSellMaxInput
+wickRejectMin = newsMode == "High News Risk" ? math.max(wickRejectInput, 32) : wickRejectInput
+
+candleBuyOK = bull and bodyPct >= bodyMin and closeLoc >= closeBuyMin
+candleSellOK = bear and bodyPct >= bodyMin and closeLoc <= closeSellMax
+rejectBuyOK = lowerWickPct >= wickRejectMin
+rejectSellOK = upperWickPct >= wickRejectMin
+
+trendBull = emaFast > emaSlow and close > emaFast
+trendBear = emaFast < emaSlow and close < emaFast
+
+htfBull(tf) =>
+    f = request.security(syminfo.tickerid, tf, ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
+    s = request.security(syminfo.tickerid, tf, ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
+    c = request.security(syminfo.tickerid, tf, close, lookahead=barmerge.lookahead_off)
+    f > s and c > f
+
+htfBear(tf) =>
+    f = request.security(syminfo.tickerid, tf, ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
+    s = request.security(syminfo.tickerid, tf, ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
+    c = request.security(syminfo.tickerid, tf, close, lookahead=barmerge.lookahead_off)
+    f < s and c < f
+
+h1Bull = htfBull(htf1)
+h2Bull = htfBull(htf2)
+h3Bull = htfBull(htf3)
+h1Bear = htfBear(htf1)
+h2Bear = htfBear(htf2)
+h3Bear = htfBear(htf3)
+htfBullCount = (h1Bull ? 1 : 0) + (h2Bull ? 1 : 0) + (h3Bull ? 1 : 0)
+htfBearCount = (h1Bear ? 1 : 0) + (h2Bear ? 1 : 0) + (h3Bear ? 1 : 0)
+htfBuyOK = not useHTFTrend or (strictHTF ? htfBullCount == 3 : htfBullCount >= 2)
+htfSellOK = not useHTFTrend or (strictHTF ? htfBearCount == 3 : htfBearCount >= 2)
+trendBuyOK = not useTrendFilter or trendBull
+trendSellOK = not useTrendFilter or trendBear
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SUPPORT / RESISTANCE / STRUCTURE
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float pivotRes = na
+var float pivotSup = na
+if not na(ph)
+    pivotRes := ph
+if not na(pl)
+    pivotSup := pl
+
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off)
+pwl = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_off)
+
+nearLevel(level) =>
+    not na(level) and math.abs(close - level) <= atr * zoneAtrMult
+
+nearSupport = (usePivots and nearLevel(pivotSup)) or (usePD and nearLevel(pdl)) or (usePW and nearLevel(pwl))
+nearResist = (usePivots and nearLevel(pivotRes)) or (usePD and nearLevel(pdh)) or (usePW and nearLevel(pwh))
+zoneBuyOK = not useZones or nearSupport
+zoneSellOK = not useZones or nearResist
+
+sweepBuy = ((usePivots and not na(pivotSup) and low < pivotSup and close > pivotSup) or (usePD and low < pdl and close > pdl) or (usePW and low < pwl and close > pwl))
+sweepSell = ((usePivots and not na(pivotRes) and high > pivotRes and close < pivotRes) or (usePD and high > pdh and close < pdh) or (usePW and high > pwh and close < pwh))
+sweepBuyOK = not useSweep or sweepBuy or rejectBuyOK
+sweepSellOK = not useSweep or sweepSell or rejectSellOK
+
+recentHigh = ta.highest(high[1], structureLen)
+recentLow = ta.lowest(low[1], structureLen)
+bosBuy = close > recentHigh
+bosSell = close < recentLow
+bosBuyOK = not useBOS or bosBuy or close > ta.highest(close[1], math.max(5, structureLen / 2))
+bosSellOK = not useBOS or bosSell or close < ta.lowest(close[1], math.max(5, structureLen / 2))
+
+// Sideways filter
+emaGap = math.abs(emaFast - emaSlow)
+rangeAvg = ta.sma(high - low, 20)
+sideway = emaGap < atr * 0.25 or rangeAvg < atr * 0.65
+sidewayOK = not sideway
+
+// Macro risk
+macroDxyClose = request.security(dxySymbol, macroTf, close, lookahead=barmerge.lookahead_off)
+macroDxyEma = request.security(dxySymbol, macroTf, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+macroYClose = request.security(us10ySymbol, macroTf, close, lookahead=barmerge.lookahead_off)
+macroYEma = request.security(us10ySymbol, macroTf, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+macroBuyOK = not useMacroFilter or (macroDxyClose <= macroDxyEma and macroYClose <= macroYEma)
+macroSellOK = not useMacroFilter or (macroDxyClose >= macroDxyEma or macroYClose >= macroYEma)
+tradeAllowed = newsMode != "No Trade"
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SCORE SYSTEM
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+scoreBuy = 0.0
+scoreSell = 0.0
+scoreBuy += candleBuyOK ? 20 : 0
+scoreBuy += rejectBuyOK ? 10 : 0
+scoreBuy += trendBuyOK ? 15 : 0
+scoreBuy += htfBuyOK ? 15 : 0
+scoreBuy += zoneBuyOK ? 15 : 0
+scoreBuy += sweepBuyOK ? 10 : 0
+scoreBuy += bosBuyOK ? 10 : 0
+scoreBuy += sidewayOK ? 5 : 0
+scoreSell += candleSellOK ? 20 : 0
+scoreSell += rejectSellOK ? 10 : 0
+scoreSell += trendSellOK ? 15 : 0
+scoreSell += htfSellOK ? 15 : 0
+scoreSell += zoneSellOK ? 15 : 0
+scoreSell += sweepSellOK ? 10 : 0
+scoreSell += bosSellOK ? 10 : 0
+scoreSell += sidewayOK ? 5 : 0
+
+waitThreshold = mode == "Aggressive" ? 58 : mode == "Balanced" ? 68 : 76
+confirmThreshold = mode == "Aggressive" ? 66 : mode == "Balanced" ? 76 : 84
+if newsMode == "High News Risk"
+    waitThreshold += 5
+    confirmThreshold += 7
+
+waitBuyRaw = tradeAllowed and macroBuyOK and scoreBuy >= waitThreshold and candleBuyOK and trendBuyOK and htfBuyOK
+waitSellRaw = tradeAllowed and macroSellOK and scoreSell >= waitThreshold and candleSellOK and trendSellOK and htfSellOK
+
+var int lastWaitDir = 0
+var int lastWaitBar = na
+waitBuy = waitBuyRaw and not waitBuyRaw[1]
+waitSell = waitSellRaw and not waitSellRaw[1]
+if waitBuy
+    lastWaitDir := 1
+    lastWaitBar := bar_index
+if waitSell
+    lastWaitDir := -1
+    lastWaitBar := bar_index
+
+buyConfirmed = tradeAllowed and lastWaitDir == 1 and bar_index == lastWaitBar + 1 and bull and scoreBuy >= confirmThreshold and close > high[1]
+sellConfirmed = tradeAllowed and lastWaitDir == -1 and bar_index == lastWaitBar + 1 and bear and scoreSell >= confirmThreshold and close < low[1]
+if buyConfirmed or sellConfirmed
+    lastWaitDir := 0
+    lastWaitBar := na
+if not na(lastWaitBar) and bar_index > lastWaitBar + 1
+    lastWaitDir := 0
+    lastWaitBar := na
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LABEL CLEANUP
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var label[] sigLabels = array.new_label()
+newLabel(_x, _y, _txt, _style, _bg, _tc) =>
+    lb = label.new(_x, _y, _txt, xloc=xloc.bar_index, yloc=yloc.price, style=_style, color=_bg, textcolor=_tc, size=size.small)
+    array.push(sigLabels, lb)
+    if array.size(sigLabels) > maxKeepLabels
+        label.delete(array.shift(sigLabels))
+
+if waitBuy and showWaitLabels
+    newLabel(bar_index, low, waitBuyText, label.style_label_up, color.new(color.lime, 0), color.black)
+if waitSell and showWaitLabels
+    newLabel(bar_index, high, waitSellText, label.style_label_down, color.new(color.red, 0), color.white)
+if buyConfirmed and showConfirmedLabels
+    newLabel(bar_index, low, buyConfText, label.style_label_up, color.new(color.green, 0), color.white)
+if sellConfirmed and showConfirmedLabels
+    newLabel(bar_index, high, sellConfText, label.style_label_down, color.new(color.maroon, 0), color.white)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TRADE PLAN + STATS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var line[] planLines = array.new_line()
+clearPlanLines() =>
+    while array.size(planLines) > 0
+        line.delete(array.shift(planLines))
+
+calcTpDist(multAtr, fixedPts) =>
+    tpMode == "ATR" ? atr * multAtr : tpMode == "Fixed Points" ? fixedPts : math.max(atr * multAtr, fixedPts)
+
+var int activeDir = 0
+var float entry = na
+var float sl = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var bool tp1Hit = false
+var int trades = 0
+var int wins = 0
+var int losses = 0
+var int protectedTrades = 0
+var float netPoints = 0.0
+var float lastR = na
+
+startTrade(_dir) =>
+    e = close
+    slBase = _dir == 1 ? math.min(low, ta.lowest(low, 5)) : math.max(high, ta.highest(high, 5))
+    stop = _dir == 1 ? math.min(slBase, e - atr * slAtrMult) : math.max(slBase, e + atr * slAtrMult)
+    d1 = calcTpDist(tp1Atr, fixedTP1)
+    d2 = calcTpDist(tp2Atr, fixedTP2)
+    strongTrend = (_dir == 1 and htfBullCount == 3 and trendBull) or (_dir == -1 and htfBearCount == 3 and trendBear)
+    d3Base = calcTpDist(tp3Atr, fixedTP3)
+    d3 = allowBigTP and strongTrend ? math.max(d3Base, fixedTP3) : d3Base
+    t1 = _dir == 1 ? e + d1 : e - d1
+    t2 = _dir == 1 ? e + d2 : e - d2
+    t3 = _dir == 1 ? e + d3 : e - d3
+    [e, stop, t1, t2, t3]
+
+if buyConfirmed or sellConfirmed
+    activeDir := buyConfirmed ? 1 : -1
+    [entry, sl, tp1, tp2, tp3] = startTrade(activeDir)
+    tp1Hit := false
+    trades += 1
+    lastR := math.abs(tp1 - entry) / math.max(math.abs(entry - sl), syminfo.mintick)
+    if showTradePlan
+        clearPlanLines()
+        x1 = bar_index
+        x2 = bar_index + 30
+        array.push(planLines, line.new(x1, entry, x2, entry, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.white, 0), width=2))
+        array.push(planLines, line.new(x1, sl, x2, sl, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.red, 0), width=2))
+        array.push(planLines, line.new(x1, tp1, x2, tp1, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.green, 0), width=1))
+        array.push(planLines, line.new(x1, tp2, x2, tp2, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.green, 0), width=1))
+        array.push(planLines, line.new(x1, tp3, x2, tp3, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.green, 0), width=2))
+
+if activeDir == 1
+    if not tp1Hit and high >= tp1
+        tp1Hit := true
+        protectedTrades += 1
+    if low <= sl
+        losses += 1
+        netPoints += sl - entry
+        activeDir := 0
+    else if high >= tp3
+        wins += 1
+        netPoints += tp3 - entry
+        activeDir := 0
+else if activeDir == -1
+    if not tp1Hit and low <= tp1
+        tp1Hit := true
+        protectedTrades += 1
+    if high >= sl
+        losses += 1
+        netPoints += entry - sl
+        activeDir := 0
+    else if low <= tp3
+        wins += 1
+        netPoints += entry - tp3
+        activeDir := 0
+
+while array.size(planLines) > maxKeepLines
+    line.delete(array.shift(planLines))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DASHBOARD
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pos = dashPosition == "Top Right" ? position.top_right : dashPosition == "Bottom Right" ? position.bottom_right : dashPosition == "Top Left" ? position.top_left : position.bottom_left
+var table dash = table.new(pos, 2, 18, border_width=1)
+row(_r, _k, _v, _bg) =>
+    table.cell(dash, 0, _r, _k, bgcolor=color.new(color.gray, 35), text_color=color.white, text_size=size.normal)
+    table.cell(dash, 1, _r, _v, bgcolor=_bg, text_color=color.white, text_size=size.normal)
+
+trendText = trendBull ? "BULL" : trendBear ? "BEAR" : "SIDE"
+htfText = str.tostring(htfBullCount) + " Bull / " + str.tostring(htfBearCount) + " Bear"
+zoneText = nearSupport ? "SUPPORT" : nearResist ? "RESIST" : "NO ZONE"
+candleText = candleBuyOK ? "BUY OK" : candleSellOK ? "SELL OK" : "WAIT"
+biasText = scoreBuy > scoreSell and scoreBuy >= waitThreshold ? "BUY" : scoreSell > scoreBuy and scoreSell >= waitThreshold ? "SELL" : "WAIT"
+quality = math.max(scoreBuy, scoreSell)
+winRate = trades > 0 ? (wins / trades) * 100.0 : 0.0
+protectedRate = trades > 0 ? (protectedTrades / trades) * 100.0 : 0.0
+activeText = activeDir == 1 ? "BUY ACTIVE" : activeDir == -1 ? "SELL ACTIVE" : "NO TRADE"
+riskText = newsMode == "No Trade" ? "NO TRADE" : newsMode == "High News Risk" ? "HIGH RISK" : sideway ? "SIDEWAY" : "OK"
+
+if showDashboard and barstate.islast
+    row(0, "Abed Zero PRO", "v1 Clean", color.new(color.blue, 35))
+    row(1, "Mode", mode, color.new(color.gray, 30))
+    row(2, "News", newsMode, newsMode == "Normal" ? color.new(color.green, 55) : color.new(color.red, 35))
+    row(3, "Trend", trendText, trendBull ? color.new(color.green, 55) : trendBear ? color.new(color.red, 55) : color.new(color.orange, 55))
+    row(4, "HTF", htfText, color.new(color.gray, 30))
+    row(5, "Zone", zoneText, color.new(color.gray, 30))
+    row(6, "Candle", candleText, candleBuyOK ? color.new(color.green, 55) : candleSellOK ? color.new(color.red, 55) : color.new(color.orange, 55))
+    row(7, "Bias", biasText + " " + str.tostring(quality, "#.0") + "%", biasText == "BUY" ? color.new(color.green, 45) : biasText == "SELL" ? color.new(color.red, 45) : color.new(color.gray, 35))
+    row(8, "Risk", riskText, riskText == "OK" ? color.new(color.green, 55) : color.new(color.red, 45))
+    row(9, "Active", activeText, activeDir == 1 ? color.new(color.green, 45) : activeDir == -1 ? color.new(color.red, 45) : color.new(color.gray, 35))
+    row(10, "Entry", na(entry) ? "-" : str.tostring(entry, format.mintick), color.new(color.gray, 30))
+    row(11, "SL", na(sl) ? "-" : str.tostring(sl, format.mintick), color.new(color.red, 60))
+    row(12, "TP1 / TP2 / TP3", na(tp1) ? "-" : str.tostring(tp1, format.mintick) + " / " + str.tostring(tp2, format.mintick) + " / " + str.tostring(tp3, format.mintick), color.new(color.green, 60))
+    row(13, "Trades", str.tostring(trades), color.new(color.gray, 30))
+    row(14, "Wins / Losses", str.tostring(wins) + " / " + str.tostring(losses), color.new(color.gray, 30))
+    row(15, "Win Rate", str.tostring(winRate, "#.00") + "%", winRate >= 50 ? color.new(color.green, 45) : color.new(color.red, 45))
+    row(16, "Protected", str.tostring(protectedRate, "#.00") + "%", color.new(color.purple, 45))
+    row(17, "Net Points / R", str.tostring(netPoints, "#.00") + " / " + (na(lastR) ? "-" : str.tostring(lastR, "#.00")), netPoints >= 0 ? color.new(color.green, 45) : color.new(color.red, 45))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ALERTS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+alertcondition(waitBuy, "WAIT BUY", "WAIT BUY setup on {{ticker}} {{interval}}")
+alertcondition(waitSell, "WAIT SELL", "WAIT SELL setup on {{ticker}} {{interval}}")
+alertcondition(buyConfirmed, "BUY CONFIRMED", "BUY CONFIRMED on {{ticker}} {{interval}}")
+alertcondition(sellConfirmed, "SELL CONFIRMED", "SELL CONFIRMED on {{ticker}} {{interval}}")
