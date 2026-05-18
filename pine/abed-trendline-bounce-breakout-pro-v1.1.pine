@@ -1,0 +1,334 @@
+//@version=6
+indicator("Abed Trendline Bounce & Breakout PRO v1.1 - Quality Filter", overlay=true, max_labels_count=500, max_lines_count=100)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Inputs
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pivotLeft      = input.int(5, "Pivot Left", minval=1, maxval=50)
+pivotRight     = input.int(5, "Pivot Right", minval=1, maxval=50)
+lineWidth      = input.int(2, "Trendline Width", minval=1, maxval=5)
+
+useHTF         = input.bool(true, "Use MTF Confirmation")
+htf1           = input.timeframe("15", "HTF 1")
+htf2           = input.timeframe("60", "HTF 2")
+minHTFConfirm  = input.int(1, "Min HTF Confirmations", minval=1, maxval=2)
+
+emaFastLen     = input.int(21, "EMA Fast")
+emaMidLen      = input.int(50, "EMA Mid")
+emaSlowLen     = input.int(200, "EMA Slow")
+
+rsiLen         = input.int(14, "RSI Length")
+rsiMaLen       = input.int(9, "RSI MA Length")
+atrLen         = input.int(14, "ATR Length")
+
+useQuality     = input.bool(true, "Use Quality Filter")
+rangeLen       = input.int(24, "Range Filter Length", minval=5, maxval=200)
+minRangeATR    = input.float(1.35, "Minimum Range ATR", step=0.05)
+diLen          = input.int(14, "DI Length", minval=2)
+adxSmooth      = input.int(14, "ADX Smoothing", minval=2)
+minADX         = input.float(15.0, "Minimum ADX", step=0.5)
+minEmaSepATR   = input.float(0.08, "Minimum EMA Separation ATR", step=0.01)
+
+allowCounter   = input.bool(false, "Allow Counter Trend Breakout")
+closeOnly      = input.bool(true, "Signal Only After Candle Close")
+touchATR       = input.float(0.22, "Trendline Touch Zone ATR", step=0.05)
+breakATR       = input.float(0.06, "Breakout Close Buffer ATR", step=0.01)
+slBufferATR    = input.float(0.35, "SL Buffer ATR", step=0.05)
+rr1            = input.float(1.0, "TP1 RR", step=0.25)
+rr2            = input.float(2.0, "TP2 RR", step=0.25)
+
+earlyThreshold = input.int(80, "Early Signal Score", minval=1, maxval=100)
+confThreshold  = input.int(90, "Confirmed Signal Score", minval=1, maxval=100)
+minGapBars     = input.int(20, "Minimum Gap Between Same Direction Signals", minval=1)
+
+showLines      = input.bool(true, "Show Trendlines")
+showEMAs       = input.bool(true, "Show EMAs")
+showLabels     = input.bool(true, "Show Labels")
+showTradePlan  = input.bool(true, "Show Entry / SL / TP")
+useBEAfterTP1  = input.bool(true, "Move SL to Breakeven After TP1")
+
+labelOffsetATR = input.float(0.35, "Label Offset ATR", step=0.05)
+labelSizeInput = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"])
+showDashboard  = input.bool(true, "Show Dashboard")
+dashPosInput   = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Helpers
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+f_labelSize(_s) => _s == "Tiny" ? size.tiny : _s == "Small" ? size.small : _s == "Normal" ? size.normal : size.large
+f_dashPos(_s) => _s == "Top Left" ? position.top_left : _s == "Bottom Right" ? position.bottom_right : _s == "Bottom Left" ? position.bottom_left : position.top_right
+f_htfBull(_tf) => request.security(syminfo.tickerid, _tf, close > ta.ema(close, 50) and ta.ema(close, 21) > ta.ema(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+f_htfBear(_tf) => request.security(syminfo.tickerid, _tf, close < ta.ema(close, 50) and ta.ema(close, 21) < ta.ema(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Core Indicators
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+emaFast = ta.ema(close, emaFastLen)
+emaMid  = ta.ema(close, emaMidLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsi     = ta.rsi(close, rsiLen)
+rsiMa   = ta.sma(rsi, rsiMaLen)
+atr     = ta.atr(atrLen)
+[plusDI, minusDI, adx] = ta.dmi(diLen, adxSmooth)
+
+emaBull = close > emaMid and emaFast > emaMid
+emaBear = close < emaMid and emaFast < emaMid
+rsiBull = rsi > rsiMa and rsi > 50
+rsiBear = rsi < rsiMa and rsi < 50
+
+hRange = ta.highest(high, rangeLen) - ta.lowest(low, rangeLen)
+rangeOK = hRange >= atr * minRangeATR
+emaSepOK = math.abs(emaFast - emaMid) >= atr * minEmaSepATR
+adxOK = adx >= minADX
+qualityOK = not useQuality or (rangeOK and adxOK and emaSepOK)
+
+tf1Bull = f_htfBull(htf1)
+tf2Bull = f_htfBull(htf2)
+tf1Bear = f_htfBear(htf1)
+tf2Bear = f_htfBear(htf2)
+htfBullScore = (tf1Bull ? 1 : 0) + (tf2Bull ? 1 : 0)
+htfBearScore = (tf1Bear ? 1 : 0) + (tf2Bear ? 1 : 0)
+htfBuyOk  = not useHTF or htfBullScore >= minHTFConfirm
+htfSellOk = not useHTF or htfBearScore >= minHTFConfirm
+
+marketBull = emaBull and htfBuyOk
+marketBear = emaBear and htfSellOk
+marketState = marketBull ? "BULLISH" : marketBear ? "BEARISH" : "MIXED / RANGE"
+
+plot(showEMAs ? emaFast : na, "EMA 21", color=color.new(color.teal, 0))
+plot(showEMAs ? emaMid : na, "EMA 50", color=color.new(color.orange, 0))
+plot(showEMAs ? emaSlow : na, "EMA 200", color=color.new(color.gray, 25))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Candlestick Confirmation
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+rng        = math.max(high - low, syminfo.mintick)
+body       = math.max(math.abs(close - open), syminfo.mintick)
+upperWick  = high - math.max(open, close)
+lowerWick  = math.min(open, close) - low
+bodyPct    = body / rng
+
+bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+bullPin    = lowerWick >= body * 1.8 and close > open and close > (high + low) / 2
+bearPin    = upperWick >= body * 1.8 and close < open and close < (high + low) / 2
+strongBull = close > open and bodyPct >= 0.58
+strongBear = close < open and bodyPct >= 0.58
+bullCandle = bullEngulf or bullPin or strongBull
+bearCandle = bearEngulf or bearPin or strongBear
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Automatic Trendlines from Pivots
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pl = ta.pivotlow(low, pivotLeft, pivotRight)
+ph = ta.pivothigh(high, pivotLeft, pivotRight)
+
+var float prevLow = na
+var float lastLow = na
+var int prevLowBar = na
+var int lastLowBar = na
+var float prevHigh = na
+var float lastHigh = na
+var int prevHighBar = na
+var int lastHighBar = na
+var line upLine = na
+var line dnLine = na
+
+if not na(pl)
+    pBar = bar_index - pivotRight
+    pVal = pl
+    prevLow := lastLow
+    prevLowBar := lastLowBar
+    lastLow := pVal
+    lastLowBar := pBar
+    validUp = not na(prevLow) and not na(prevLowBar) and lastLow > prevLow and lastLowBar > prevLowBar
+    if validUp
+        if not na(upLine)
+            line.delete(upLine)
+        upLine := line.new(prevLowBar, prevLow, lastLowBar, lastLow, extend=extend.right, color=color.new(color.lime, showLines ? 0 : 100), width=lineWidth)
+
+if not na(ph)
+    pBar = bar_index - pivotRight
+    pVal = ph
+    prevHigh := lastHigh
+    prevHighBar := lastHighBar
+    lastHigh := pVal
+    lastHighBar := pBar
+    validDn = not na(prevHigh) and not na(prevHighBar) and lastHigh < prevHigh and lastHighBar > prevHighBar
+    if validDn
+        if not na(dnLine)
+            line.delete(dnLine)
+        dnLine := line.new(prevHighBar, prevHigh, lastHighBar, lastHigh, extend=extend.right, color=color.new(color.red, showLines ? 0 : 100), width=lineWidth)
+
+upReady = not na(upLine)
+dnReady = not na(dnLine)
+upPrice = upReady ? line.get_price(upLine, bar_index) : na
+dnPrice = dnReady ? line.get_price(dnLine, bar_index) : na
+upPrev = nz(upPrice[1], upPrice)
+dnPrev = nz(dnPrice[1], dnPrice)
+touchZone = atr * touchATR
+breakZone = atr * breakATR
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Bounce + Breakout Quality Logic
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+upTouch = upReady and low <= upPrice + touchZone and close >= upPrice
+dnTouch = dnReady and high >= dnPrice - touchZone and close <= dnPrice
+
+bounceBuyRaw = upTouch and bullCandle and close > emaFast and rsiBull
+bounceSellRaw = dnTouch and bearCandle and close < emaFast and rsiBear
+breakoutBuyRaw = dnReady and close > dnPrice + breakZone and close[1] <= dnPrev and strongBull and close > emaMid
+breakoutSellRaw = upReady and close < upPrice - breakZone and close[1] >= upPrev and strongBear and close < emaMid
+
+counterBuyOK = allowCounter and breakoutBuyRaw and close > emaMid and bullCandle and htfBullScore >= 1 and buyScoreDummy = 0
+
+buyTrendAllowed = marketBull or (allowCounter and breakoutBuyRaw and close > emaMid and bullCandle and htfBullScore >= 1)
+sellTrendAllowed = marketBear or (allowCounter and breakoutSellRaw and close < emaMid and bearCandle and htfBearScore >= 1)
+
+eventBuy = (bounceBuyRaw or breakoutBuyRaw) and buyTrendAllowed and qualityOK
+eventSell = (bounceSellRaw or breakoutSellRaw) and sellTrendAllowed and qualityOK
+
+buyScore = (eventBuy ? 35 : 0) + (bullCandle ? 20 : 0) + (htfBuyOk ? 20 : 0) + (emaBull ? 10 : 0) + (rsiBull ? 10 : 0) + (qualityOK ? 5 : 0)
+sellScore = (eventSell ? 35 : 0) + (bearCandle ? 20 : 0) + (htfSellOk ? 20 : 0) + (emaBear ? 10 : 0) + (rsiBear ? 10 : 0) + (qualityOK ? 5 : 0)
+
+buyConfirmedRaw = eventBuy and buyScore >= confThreshold
+sellConfirmedRaw = eventSell and sellScore >= confThreshold
+buyEarlyRaw = eventBuy and not buyConfirmedRaw and buyScore >= earlyThreshold
+sellEarlyRaw = eventSell and not sellConfirmedRaw and sellScore >= earlyThreshold
+
+var int lastBuyBar = na
+var int lastSellBar = na
+buyGapOk = na(lastBuyBar) or bar_index - lastBuyBar >= minGapBars
+sellGapOk = na(lastSellBar) or bar_index - lastSellBar >= minGapBars
+barOk = closeOnly ? barstate.isconfirmed : true
+buyPriority = buyScore > sellScore
+sellPriority = sellScore > buyScore
+
+finalBuyConfirmed = barOk and buyGapOk and buyPriority and buyConfirmedRaw
+finalSellConfirmed = barOk and sellGapOk and sellPriority and sellConfirmedRaw
+finalBuyEarly = barOk and buyGapOk and buyPriority and not finalBuyConfirmed and buyEarlyRaw
+finalSellEarly = barOk and sellGapOk and sellPriority and not finalSellConfirmed and sellEarlyRaw
+finalBuy = finalBuyConfirmed or finalBuyEarly
+finalSell = finalSellConfirmed or finalSellEarly
+
+if finalBuy
+    lastBuyBar := bar_index
+if finalSell
+    lastSellBar := bar_index
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Trade Plan
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+buySLRaw = breakoutBuyRaw and dnReady ? dnPrice - atr * slBufferATR : upReady ? upPrice - atr * slBufferATR : close - atr * 1.5
+sellSLRaw = breakoutSellRaw and upReady ? upPrice + atr * slBufferATR : dnReady ? dnPrice + atr * slBufferATR : close + atr * 1.5
+buyRisk = math.max(close - buySLRaw, syminfo.mintick)
+sellRisk = math.max(sellSLRaw - close, syminfo.mintick)
+buyTP1 = close + buyRisk * rr1
+buyTP2 = close + buyRisk * rr2
+sellTP1 = close - sellRisk * rr1
+sellTP2 = close - sellRisk * rr2
+
+var string activeDir = "NONE"
+var float activeEntry = na
+var float activeSL = na
+var float activeTP1 = na
+var float activeTP2 = na
+var int activeBar = na
+var bool tp1Hit = false
+var string lastSignal = "WAIT"
+
+if finalBuy
+    activeDir := "BUY"
+    activeEntry := close
+    activeSL := buySLRaw
+    activeTP1 := buyTP1
+    activeTP2 := buyTP2
+    activeBar := bar_index
+    tp1Hit := false
+    lastSignal := finalBuyConfirmed ? "BUY CONFIRMED" : "EARLY BUY"
+
+if finalSell
+    activeDir := "SELL"
+    activeEntry := close
+    activeSL := sellSLRaw
+    activeTP1 := sellTP1
+    activeTP2 := sellTP2
+    activeBar := bar_index
+    tp1Hit := false
+    lastSignal := finalSellConfirmed ? "SELL CONFIRMED" : "EARLY SELL"
+
+if activeDir == "BUY" and bar_index > activeBar
+    if high >= activeTP1
+        tp1Hit := true
+        if useBEAfterTP1
+            activeSL := math.max(activeSL, activeEntry)
+    if low <= activeSL or high >= activeTP2
+        activeDir := "NONE"
+
+if activeDir == "SELL" and bar_index > activeBar
+    if low <= activeTP1
+        tp1Hit := true
+        if useBEAfterTP1
+            activeSL := math.min(activeSL, activeEntry)
+    if high >= activeSL or low <= activeTP2
+        activeDir := "NONE"
+
+plot(showTradePlan and activeDir != "NONE" ? activeEntry : na, "Active Entry", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=2)
+plot(showTradePlan and activeDir != "NONE" ? activeSL : na, "Active SL", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+plot(showTradePlan and activeDir != "NONE" ? activeTP1 : na, "Active TP1", color=color.new(color.green, 0), style=plot.style_linebr, linewidth=1)
+plot(showTradePlan and activeDir != "NONE" ? activeTP2 : na, "Active TP2", color=color.new(color.green, 25), style=plot.style_linebr, linewidth=1)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Labels
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+lblSize = f_labelSize(labelSizeInput)
+buyType = breakoutBuyRaw ? "BREAKOUT" : "BOUNCE"
+sellType = breakoutSellRaw ? "BREAKOUT" : "BOUNCE"
+buyText = finalBuyConfirmed ? "BUY CONFIRMED\n" + buyType + "\nScore: " + str.tostring(buyScore) : finalBuyEarly ? "EARLY BUY\n" + buyType + "\nScore: " + str.tostring(buyScore) : ""
+sellText = finalSellConfirmed ? "SELL CONFIRMED\n" + sellType + "\nScore: " + str.tostring(sellScore) : finalSellEarly ? "EARLY SELL\n" + sellType + "\nScore: " + str.tostring(sellScore) : ""
+
+if showLabels and finalBuy
+    label.new(bar_index, low - atr * labelOffsetATR, buyText, style=label.style_label_up, textcolor=color.white, color=finalBuyConfirmed ? color.new(color.green, 0) : color.new(color.teal, 0), size=lblSize)
+if showLabels and finalSell
+    label.new(bar_index, high + atr * labelOffsetATR, sellText, style=label.style_label_down, textcolor=color.white, color=finalSellConfirmed ? color.new(color.red, 0) : color.new(color.orange, 0), size=lblSize)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Dashboard
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var table dash = table.new(f_dashPos(dashPosInput), 2, 11, border_width=1)
+qualityStatus = qualityOK ? "OK" : "RANGE / WEAK"
+candleStatus = bullCandle ? "Bull Candle" : bearCandle ? "Bear Candle" : "Neutral"
+tradeMode = marketBull ? "BUY ONLY" : marketBear ? "SELL ONLY" : allowCounter ? "COUNTER LIMITED" : "WAIT"
+riskStatus = activeDir == "BUY" and tp1Hit ? "BUY TP1 HIT / BE" : activeDir == "SELL" and tp1Hit ? "SELL TP1 HIT / BE" : activeDir == "BUY" ? "BUY ACTIVE" : activeDir == "SELL" ? "SELL ACTIVE" : "NO ACTIVE TRADE"
+
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "Abed TL PRO", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "v1.1 QF", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Market", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 1, marketState, text_color=color.white, bgcolor=marketBull ? color.new(color.green, 20) : marketBear ? color.new(color.red, 20) : color.new(color.gray, 45))
+    table.cell(dash, 0, 2, "Trade Mode", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 2, tradeMode, text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(dash, 0, 3, "HTF", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 3, "Bull " + str.tostring(htfBullScore) + "/2 | Bear " + str.tostring(htfBearScore) + "/2", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(dash, 0, 4, "Quality", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 4, qualityStatus, text_color=color.white, bgcolor=qualityOK ? color.new(color.green, 30) : color.new(color.red, 35))
+    table.cell(dash, 0, 5, "ADX", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 5, str.tostring(adx, "#.##"), text_color=color.white, bgcolor=adxOK ? color.new(color.green, 35) : color.new(color.red, 45))
+    table.cell(dash, 0, 6, "Candle", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 6, candleStatus, text_color=color.white, bgcolor=bullCandle ? color.new(color.green, 35) : bearCandle ? color.new(color.red, 35) : color.new(color.gray, 50))
+    table.cell(dash, 0, 7, "Buy / Sell Score", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 7, str.tostring(buyScore) + " / " + str.tostring(sellScore), text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(dash, 0, 8, "Last Signal", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 8, lastSignal, text_color=color.white, bgcolor=str.contains(lastSignal, "BUY") ? color.new(color.green, 20) : str.contains(lastSignal, "SELL") ? color.new(color.red, 20) : color.new(color.gray, 45))
+    table.cell(dash, 0, 9, "Risk", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 9, riskStatus, text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(dash, 0, 10, "Action", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dash, 1, 10, activeDir == "BUY" ? "Hold / Manage Buy" : activeDir == "SELL" ? "Hold / Manage Sell" : tradeMode == "WAIT" ? "Avoid Range" : "Wait Setup", text_color=color.white, bgcolor=color.new(color.black, 30))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Alerts
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+alertcondition(finalBuyConfirmed, "BUY CONFIRMED", "Abed TL PRO v1.1: BUY CONFIRMED")
+alertcondition(finalSellConfirmed, "SELL CONFIRMED", "Abed TL PRO v1.1: SELL CONFIRMED")
+alertcondition(finalBuyEarly, "EARLY BUY", "Abed TL PRO v1.1: EARLY BUY")
+alertcondition(finalSellEarly, "EARLY SELL", "Abed TL PRO v1.1: EARLY SELL")
