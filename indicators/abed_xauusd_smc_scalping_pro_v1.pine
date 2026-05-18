@@ -1,0 +1,361 @@
+//@version=5
+indicator("Abed XAUUSD SMC Scalping PRO v1", overlay=true, max_labels_count=500, max_lines_count=100, max_boxes_count=100)
+
+//====================================================
+// INPUTS
+//====================================================
+groupModules = "01. Modules"
+useMarketStructure = input.bool(true, "Market structure", group=groupModules)
+useHTFFilter       = input.bool(true, "HTF filter", group=groupModules)
+useSweeps          = input.bool(true, "Liquidity sweeps", group=groupModules)
+useCandleConfirm   = input.bool(true, "Candlestick confirmation", group=groupModules)
+useBreakoutRetest  = input.bool(true, "Breakout + retest", group=groupModules)
+useQualityScore    = input.bool(true, "Signal quality score", group=groupModules)
+showDashboard      = input.bool(true, "Dashboard", group=groupModules)
+showLabels         = input.bool(true, "Labels", group=groupModules)
+showSRZones        = input.bool(true, "Support / resistance zones", group=groupModules)
+showHTFSR          = input.bool(true, "HTF support / resistance warning", group=groupModules)
+
+groupCore = "02. Core Settings"
+pivotLen       = input.int(5, "Pivot length", minval=2, maxval=20, group=groupCore)
+srLookback     = input.int(80, "Fallback S/R lookback", minval=20, maxval=300, group=groupCore)
+atrLen         = input.int(14, "ATR length", minval=1, maxval=100, group=groupCore)
+zoneAtrMult    = input.float(0.35, "Zone width ATR multiplier", minval=0.05, maxval=3.0, step=0.05, group=groupCore)
+waitExpireBars = input.int(4, "WAIT expiry bars", minval=1, maxval=20, group=groupCore)
+minScore       = input.int(75, "Minimum confirmed score", minval=40, maxval=100, group=groupCore)
+
+groupHTF = "03. Higher Timeframe"
+manualHTF = input.timeframe("60", "Manual HTF fallback", group=groupHTF)
+htfMode   = input.string("Balanced", "HTF filter mode", options=["Strict", "Balanced", "Soft"], group=groupHTF)
+htfSRLookback = input.int(50, "HTF S/R lookback", minval=10, maxval=200, group=groupHTF)
+htfBlockAtrMult = input.float(0.60, "HTF S/R danger zone ATR multiplier", minval=0.10, maxval=3.0, step=0.05, group=groupHTF)
+
+groupVisual = "04. Visuals"
+labelSizeOpt = input.string("Small", "Label size", options=["Tiny", "Small", "Normal", "Large"], group=groupVisual)
+labelPosition = input.string("Auto", "Label position", options=["Auto", "Above candle", "Below candle"], group=groupVisual)
+labelOffsetAtr = input.float(0.35, "Label offset ATR", minval=0.0, maxval=3.0, step=0.05, group=groupVisual)
+maxSignalLabels = input.int(120, "Max signal labels to keep", minval=20, maxval=500, group=groupVisual)
+zoneOpacity = input.int(86, "Zone opacity", minval=0, maxval=100, group=groupVisual)
+showBuyWait = input.bool(true, "Show BUY WAIT", group=groupVisual)
+showSellWait = input.bool(true, "Show SELL WAIT", group=groupVisual)
+showBuyConfirmed = input.bool(true, "Show BUY CONFIRMED", group=groupVisual)
+showSellConfirmed = input.bool(true, "Show SELL CONFIRMED", group=groupVisual)
+
+groupDash = "05. Dashboard"
+dashPositionOpt = input.string("Top Right", "Dashboard position", options=["Top Right", "Middle Right", "Bottom Right"], group=groupDash)
+dashTextSizeOpt = input.string("Small", "Dashboard text size", options=["Tiny", "Small", "Normal"], group=groupDash)
+dashCompact = input.bool(false, "Compact dashboard", group=groupDash)
+
+//====================================================
+// HELPERS
+//====================================================
+htfTf = timeframe.period == "1" ? "15" : timeframe.period == "5" ? "60" : timeframe.period == "15" ? "60" : manualHTF
+
+labelSize = labelSizeOpt == "Tiny" ? size.tiny : labelSizeOpt == "Small" ? size.small : labelSizeOpt == "Normal" ? size.normal : size.large
+dashTextSize = dashTextSizeOpt == "Tiny" ? size.tiny : dashTextSizeOpt == "Small" ? size.small : size.normal
+dashPosition = dashPositionOpt == "Top Right" ? position.top_right : dashPositionOpt == "Middle Right" ? position.middle_right : position.bottom_right
+
+atr = ta.atr(atrLen)
+zoneWidth = atr * zoneAtrMult
+htfDangerWidth = atr * htfBlockAtrMult
+
+f_price(_v) =>
+    na(_v) ? "n/a" : str.tostring(_v, format.mintick)
+
+//====================================================
+// MARKET STRUCTURE
+//====================================================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float prevSwingHigh = na
+var float lastSwingLow = na
+var float prevSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+
+if not na(ph)
+    prevSwingHigh := lastSwingHigh
+    lastSwingHigh := ph
+    lastSwingHighBar := bar_index - pivotLen
+
+if not na(pl)
+    prevSwingLow := lastSwingLow
+    lastSwingLow := pl
+    lastSwingLowBar := bar_index - pivotLen
+
+hasStructure = not na(lastSwingHigh) and not na(prevSwingHigh) and not na(lastSwingLow) and not na(prevSwingLow)
+structHH = hasStructure and lastSwingHigh > prevSwingHigh
+structLH = hasStructure and lastSwingHigh < prevSwingHigh
+structHL = hasStructure and lastSwingLow > prevSwingLow
+structLL = hasStructure and lastSwingLow < prevSwingLow
+
+msBull = useMarketStructure and structHH and structHL
+msBear = useMarketStructure and structLH and structLL
+msRange = not msBull and not msBear
+msText = msBull ? "Uptrend HH/HL" : msBear ? "Downtrend LH/LL" : "Range / unclear"
+
+fallbackSupport = ta.lowest(low, srLookback)
+fallbackResistance = ta.highest(high, srLookback)
+nearestSupport = not na(lastSwingLow) ? lastSwingLow : fallbackSupport
+nearestResistance = not na(lastSwingHigh) ? lastSwingHigh : fallbackResistance
+
+validRange = not na(nearestSupport) and not na(nearestResistance) and nearestResistance > nearestSupport
+rangePosition = validRange ? (close - nearestSupport) / (nearestResistance - nearestSupport) : 0.50
+middleRange = validRange and rangePosition > 0.35 and rangePosition < 0.65
+rangeSpan = validRange ? nearestResistance - nearestSupport : na
+choppyMarket = validRange and rangeSpan <= atr * 2.50
+
+nearSupport = not na(nearestSupport) and (math.abs(close - nearestSupport) <= zoneWidth * 1.50 or (low <= nearestSupport + zoneWidth and close >= nearestSupport - zoneWidth))
+nearResistance = not na(nearestResistance) and (math.abs(close - nearestResistance) <= zoneWidth * 1.50 or (high >= nearestResistance - zoneWidth and close <= nearestResistance + zoneWidth))
+
+//====================================================
+// SUPPORT / RESISTANCE ZONES
+//====================================================
+supTop = showSRZones and not na(nearestSupport) ? nearestSupport + zoneWidth : na
+supBot = showSRZones and not na(nearestSupport) ? nearestSupport - zoneWidth : na
+resTop = showSRZones and not na(nearestResistance) ? nearestResistance + zoneWidth : na
+resBot = showSRZones and not na(nearestResistance) ? nearestResistance - zoneWidth : na
+
+pSupTop = plot(supTop, "Support zone top", color=color.new(color.lime, 100))
+pSupBot = plot(supBot, "Support zone bottom", color=color.new(color.lime, 100))
+pResTop = plot(resTop, "Resistance zone top", color=color.new(color.red, 100))
+pResBot = plot(resBot, "Resistance zone bottom", color=color.new(color.red, 100))
+fill(pSupTop, pSupBot, color=showSRZones ? color.new(color.lime, zoneOpacity) : na, title="Support zone")
+fill(pResTop, pResBot, color=showSRZones ? color.new(color.red, zoneOpacity) : na, title="Resistance zone")
+
+plot(showSRZones ? nearestSupport : na, "Nearest support", color=color.new(color.lime, 25), linewidth=1, style=plot.style_linebr)
+plot(showSRZones ? nearestResistance : na, "Nearest resistance", color=color.new(color.red, 25), linewidth=1, style=plot.style_linebr)
+
+//====================================================
+// HTF FILTER
+//====================================================
+htfOpen  = request.security(syminfo.tickerid, htfTf, open, lookahead=barmerge.lookahead_off)
+htfClose = request.security(syminfo.tickerid, htfTf, close, lookahead=barmerge.lookahead_off)
+htfEma21 = request.security(syminfo.tickerid, htfTf, ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+htfEma50 = request.security(syminfo.tickerid, htfTf, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+htfEma200 = request.security(syminfo.tickerid, htfTf, ta.ema(close, 200), lookahead=barmerge.lookahead_off)
+htfResistance = request.security(syminfo.tickerid, htfTf, ta.highest(high, htfSRLookback), lookahead=barmerge.lookahead_off)
+htfSupport = request.security(syminfo.tickerid, htfTf, ta.lowest(low, htfSRLookback), lookahead=barmerge.lookahead_off)
+
+htfBull = htfClose > htfEma50 and htfEma21 > htfEma50 and htfClose >= htfOpen
+htfBear = htfClose < htfEma50 and htfEma21 < htfEma50 and htfClose <= htfOpen
+htfBiasText = htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutral"
+
+allowBuyHTF = not useHTFFilter ? true : htfMode == "Soft" ? true : htfMode == "Balanced" ? not htfBear : htfBull
+allowSellHTF = not useHTFFilter ? true : htfMode == "Soft" ? true : htfMode == "Balanced" ? not htfBull : htfBear
+
+insideHTFResistance = showHTFSR and not na(htfResistance) and close >= htfResistance - htfDangerWidth and close <= htfResistance + htfDangerWidth
+insideHTFSupport = showHTFSR and not na(htfSupport) and close <= htfSupport + htfDangerWidth and close >= htfSupport - htfDangerWidth
+
+//====================================================
+// CANDLESTICK CONFIRMATION
+//====================================================
+rng = math.max(high - low, syminfo.mintick)
+body = math.abs(close - open)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+prevRng = math.max(high[1] - low[1], syminfo.mintick)
+prevBody = math.abs(close[1] - open[1])
+
+bullishEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+bearishEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+hammer = lowerWick >= body * 1.80 and upperWick <= body * 0.90 and body <= rng * 0.45
+shootingStar = upperWick >= body * 1.80 and lowerWick <= body * 0.90 and body <= rng * 0.45
+strongBullReject = lowerWick >= rng * 0.45 and close > open and close >= low + rng * 0.65
+strongBearReject = upperWick >= rng * 0.45 and close < open and close <= high - rng * 0.65
+prevDoji = prevBody <= prevRng * 0.18
+dojiBullBreak = prevDoji and close > high[1] and close > open
+dojiBearBreak = prevDoji and close < low[1] and close < open
+
+bullConfirmRaw = bullishEngulf or hammer or strongBullReject or dojiBullBreak
+bearConfirmRaw = bearishEngulf or shootingStar or strongBearReject or dojiBearBreak
+bullConfirm = barstate.isconfirmed and close > open and (not useCandleConfirm or bullConfirmRaw)
+bearConfirm = barstate.isconfirmed and close < open and (not useCandleConfirm or bearConfirmRaw)
+
+//====================================================
+// LIQUIDITY SWEEPS
+//====================================================
+bullSweep = useSweeps and barstate.isconfirmed and nearSupport and not na(nearestSupport) and low < nearestSupport and close > nearestSupport and close > open
+bearSweep = useSweeps and barstate.isconfirmed and nearResistance and not na(nearestResistance) and high > nearestResistance and close < nearestResistance and close < open
+
+//====================================================
+// BREAKOUT + RETEST LOGIC
+//====================================================
+bodyBreakAbove = useBreakoutRetest and barstate.isconfirmed and not na(nearestResistance) and close > nearestResistance and close[1] <= nearestResistance
+bodyBreakBelow = useBreakoutRetest and barstate.isconfirmed and not na(nearestSupport) and close < nearestSupport and close[1] >= nearestSupport
+
+var bool bullBreakArmed = false
+var bool bearBreakArmed = false
+var float bullBrokenLevel = na
+var float bearBrokenLevel = na
+var int bullBreakBar = na
+var int bearBreakBar = na
+
+if bodyBreakAbove
+    bullBreakArmed := true
+    bullBrokenLevel := nearestResistance
+    bullBreakBar := bar_index
+    bearBreakArmed := false
+
+if bodyBreakBelow
+    bearBreakArmed := true
+    bearBrokenLevel := nearestSupport
+    bearBreakBar := bar_index
+    bullBreakArmed := false
+
+if bullBreakArmed and not na(bullBrokenLevel) and close < bullBrokenLevel - zoneWidth
+    bullBreakArmed := false
+
+if bearBreakArmed and not na(bearBrokenLevel) and close > bearBrokenLevel + zoneWidth
+    bearBreakArmed := false
+
+bullRetest = useBreakoutRetest and bullBreakArmed and not na(bullBrokenLevel) and bar_index > bullBreakBar and low <= bullBrokenLevel + zoneWidth and close >= bullBrokenLevel
+bearRetest = useBreakoutRetest and bearBreakArmed and not na(bearBrokenLevel) and bar_index > bearBreakBar and high >= bearBrokenLevel - zoneWidth and close <= bearBrokenLevel
+
+//====================================================
+// WAIT + CONFIRMED STATE MACHINE
+//====================================================
+canBuyByStructure = not useMarketStructure or not msBear or (msBear and bullSweep)
+canSellByStructure = not useMarketStructure or not msBull or (msBull and bearSweep)
+
+buyWaitSetup = barstate.isconfirmed and canBuyByStructure and not middleRange and not choppyMarket and ((useSweeps and bullSweep) or bullRetest)
+sellWaitSetup = barstate.isconfirmed and canSellByStructure and not middleRange and not choppyMarket and ((useSweeps and bearSweep) or bearRetest)
+
+var bool buyArmed = false
+var bool sellArmed = false
+var int buyWaitBar = na
+var int sellWaitBar = na
+var string lastSignal = "NONE"
+
+if buyArmed and not na(buyWaitBar) and bar_index - buyWaitBar > waitExpireBars
+    buyArmed := false
+
+if sellArmed and not na(sellWaitBar) and bar_index - sellWaitBar > waitExpireBars
+    sellArmed := false
+
+//====================================================
+// QUALITY SCORE
+//====================================================
+int bullScore = 0
+bullScore += nearSupport ? 15 : 0
+bullScore += buyArmed ? 20 : 0
+bullScore += bullConfirm ? 20 : 0
+bullScore += not useHTFFilter ? 20 : htfBull ? 20 : not htfBear ? 10 : 0
+bullScore += not useMarketStructure ? 15 : msBull ? 15 : msRange ? 8 : 0
+bullScore += not middleRange ? 10 : 0
+bullScore := math.min(bullScore, 100)
+
+int bearScore = 0
+bearScore += nearResistance ? 15 : 0
+bearScore += sellArmed ? 20 : 0
+bearScore += bearConfirm ? 20 : 0
+bearScore += not useHTFFilter ? 20 : htfBear ? 20 : not htfBull ? 10 : 0
+bearScore += not useMarketStructure ? 15 : msBear ? 15 : msRange ? 8 : 0
+bearScore += not middleRange ? 10 : 0
+bearScore := math.min(bearScore, 100)
+
+scoreBuyOK = not useQualityScore or bullScore >= minScore
+scoreSellOK = not useQualityScore or bearScore >= minScore
+
+buyConfirmed = barstate.isconfirmed and buyArmed and not na(buyWaitBar) and bar_index > buyWaitBar and bullConfirm and allowBuyHTF and not insideHTFResistance and scoreBuyOK
+sellConfirmed = barstate.isconfirmed and sellArmed and not na(sellWaitBar) and bar_index > sellWaitBar and bearConfirm and allowSellHTF and not insideHTFSupport and scoreSellOK
+
+//====================================================
+// LABELS
+//====================================================
+var label[] sigLabels = array.new_label()
+
+f_add_label(_x, _y, _txt, _style, _bg, _tc) =>
+    if showLabels
+        label lb = label.new(_x, _y, _txt, xloc=xloc.bar_index, yloc=yloc.price, style=_style, color=_bg, textcolor=_tc, size=labelSize)
+        array.push(sigLabels, lb)
+        if array.size(sigLabels) > maxSignalLabels
+            label.delete(array.shift(sigLabels))
+
+buyLabelY = labelPosition == "Above candle" ? high + atr * labelOffsetAtr : low - atr * labelOffsetAtr
+sellLabelY = labelPosition == "Below candle" ? low - atr * labelOffsetAtr : high + atr * labelOffsetAtr
+
+if buyConfirmed
+    if showBuyConfirmed
+        f_add_label(bar_index, buyLabelY, "BUY CONFIRMED\n" + str.tostring(bullScore) + "%", label.style_label_up, color.new(color.lime, 0), color.black)
+    buyArmed := false
+    sellArmed := false
+    bullBreakArmed := false
+    lastSignal := "BUY CONFIRMED"
+else if sellConfirmed
+    if showSellConfirmed
+        f_add_label(bar_index, sellLabelY, "SELL CONFIRMED\n" + str.tostring(bearScore) + "%", label.style_label_down, color.new(color.red, 0), color.white)
+    sellArmed := false
+    buyArmed := false
+    bearBreakArmed := false
+    lastSignal := "SELL CONFIRMED"
+else
+    if buyWaitSetup
+        buyArmed := true
+        sellArmed := false
+        buyWaitBar := bar_index
+        if bullRetest
+            bullBreakArmed := false
+        if showBuyWait
+            f_add_label(bar_index, buyLabelY, "BUY WAIT", label.style_label_up, color.new(color.teal, 0), color.white)
+        lastSignal := "BUY WAIT"
+    if sellWaitSetup
+        sellArmed := true
+        buyArmed := false
+        sellWaitBar := bar_index
+        if bearRetest
+            bearBreakArmed := false
+        if showSellWait
+            f_add_label(bar_index, sellLabelY, "SELL WAIT", label.style_label_down, color.new(color.orange, 0), color.white)
+        lastSignal := "SELL WAIT"
+
+//====================================================
+// DASHBOARD
+//====================================================
+sweepText = bullSweep ? "Bullish sweep" : bearSweep ? "Bearish sweep" : "None"
+confirmText = bullConfirm ? "Bullish confirm" : bearConfirm ? "Bearish confirm" : "Waiting"
+breakoutText = bullBreakArmed ? "Bull break armed" : bearBreakArmed ? "Bear break armed" : bullRetest ? "Bull retest" : bearRetest ? "Bear retest" : "None"
+trendText = msBull ? "Bullish" : msBear ? "Bearish" : "Range"
+riskText = choppyMarket or middleRange ? "AVOID" : insideHTFResistance or insideHTFSupport ? "CAUTION" : "SAFE"
+riskColor = riskText == "SAFE" ? color.new(color.lime, 70) : riskText == "CAUTION" ? color.new(color.orange, 70) : color.new(color.red, 70)
+
+var table dash = table.new(dashPosition, 2, 16, border_width=1)
+
+f_dash_row(_row, _name, _value, _bg) =>
+    table.cell(dash, 0, _row, _name, text_color=color.white, bgcolor=color.new(color.black, 0), text_size=dashTextSize)
+    table.cell(dash, 1, _row, _value, text_color=color.white, bgcolor=_bg, text_size=dashTextSize)
+
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 15)
+    f_dash_row(0, "TF / HTF", timeframe.period + " / " + htfTf, color.new(color.blue, 70))
+    f_dash_row(1, "Structure", msText, msBull ? color.new(color.lime, 75) : msBear ? color.new(color.red, 75) : color.new(color.gray, 75))
+    f_dash_row(2, "Trend", trendText, msBull ? color.new(color.lime, 75) : msBear ? color.new(color.red, 75) : color.new(color.gray, 75))
+    f_dash_row(3, "HTF Bias", htfBiasText, htfBull ? color.new(color.lime, 75) : htfBear ? color.new(color.red, 75) : color.new(color.gray, 75))
+    f_dash_row(4, "Support", f_price(nearestSupport), color.new(color.lime, 85))
+    f_dash_row(5, "Resistance", f_price(nearestResistance), color.new(color.red, 85))
+    f_dash_row(6, "Sweep", sweepText, bullSweep ? color.new(color.lime, 75) : bearSweep ? color.new(color.red, 75) : color.new(color.gray, 80))
+    f_dash_row(7, "Candle", confirmText, bullConfirm ? color.new(color.lime, 75) : bearConfirm ? color.new(color.red, 75) : color.new(color.gray, 80))
+    if not dashCompact
+        f_dash_row(8, "Breakout", breakoutText, color.new(color.purple, 80))
+        f_dash_row(9, "Bull Score", str.tostring(bullScore) + "%", bullScore >= minScore ? color.new(color.lime, 75) : color.new(color.gray, 80))
+        f_dash_row(10, "Bear Score", str.tostring(bearScore) + "%", bearScore >= minScore ? color.new(color.red, 75) : color.new(color.gray, 80))
+        f_dash_row(11, "HTF Res", f_price(htfResistance), insideHTFResistance ? color.new(color.red, 65) : color.new(color.gray, 85))
+        f_dash_row(12, "HTF Sup", f_price(htfSupport), insideHTFSupport ? color.new(color.lime, 65) : color.new(color.gray, 85))
+        f_dash_row(13, "Signal", lastSignal, lastSignal == "BUY CONFIRMED" ? color.new(color.lime, 60) : lastSignal == "SELL CONFIRMED" ? color.new(color.red, 60) : color.new(color.gray, 75))
+        f_dash_row(14, "Risk", riskText, riskColor)
+    else
+        f_dash_row(8, "Signal", lastSignal, lastSignal == "BUY CONFIRMED" ? color.new(color.lime, 60) : lastSignal == "SELL CONFIRMED" ? color.new(color.red, 60) : color.new(color.gray, 75))
+        f_dash_row(9, "Risk", riskText, riskColor)
+
+if not showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 15)
+
+//====================================================
+// ALERTS
+//====================================================
+alertcondition(buyConfirmed, "BUY CONFIRMED", "Abed XAUUSD SMC Scalping PRO v1: BUY CONFIRMED")
+alertcondition(sellConfirmed, "SELL CONFIRMED", "Abed XAUUSD SMC Scalping PRO v1: SELL CONFIRMED")
+alertcondition(buyWaitSetup, "BUY WAIT", "Abed XAUUSD SMC Scalping PRO v1: BUY WAIT")
+alertcondition(sellWaitSetup, "SELL WAIT", "Abed XAUUSD SMC Scalping PRO v1: SELL WAIT")
