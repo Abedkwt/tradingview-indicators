@@ -1,0 +1,12 @@
+{
+  "secret": "ABED_SECRET_2026",
+  "strategy": "CLEAN_LABELS_v6",
+  "symbol": "XAUUSD",
+  "timeframe": "5M",
+  "action": "BUY",
+  "alert_id": "TEST_BUY_001",
+  "sl": 3334.20,
+  "tp1": 3347.00,
+  "tp2": 3354.00,
+  "reason": "MANUAL_TEST_BUY"
+}
